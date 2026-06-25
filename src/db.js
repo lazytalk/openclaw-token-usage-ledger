@@ -30,10 +30,14 @@ export function createUsageDb(path) {
     db.pragma("journal_mode = WAL");
     db.pragma("synchronous = NORMAL");
     db.pragma("busy_timeout = 5000");
+    db.function("eventRank", (status) => {
+      if (status === "success") return 2;
+      if (status === "error") return 1;
+      if (status) return 1;
+      return 0;
+    });
     db.exec(createSchemaSql);
-    const columns = usageEventsColumns.join(", ");
-    const values = usageEventsColumns.map((column) => `@${column}`).join(", ");
-    insertStatement = db.prepare(`INSERT OR IGNORE INTO usage_events (${columns}) VALUES (${values})`);
+    insertStatement = db.prepare(buildUsageUpsertSql());
     return db;
   }
 
@@ -71,6 +75,23 @@ export function createUsageDb(path) {
       insertStatement = null;
     }
   };
+}
+
+export function buildUsageUpsertSql(columns = usageEventsColumns) {
+  const columnList = columns.join(", ");
+  const values = columns.map((column) => `@${column}`).join(", ");
+  const updates = columns
+    .filter((column) => column !== "id")
+    .map((column) => `${column} = excluded.${column}`)
+    .join(", ");
+
+  return `
+      INSERT INTO usage_events (${columnList})
+      VALUES (${values})
+      ON CONFLICT(id) DO UPDATE SET
+        ${updates}
+      WHERE eventRank(excluded.status) >= eventRank(usage_events.status)
+    `;
 }
 
 export function buildEventId(event = {}, ctx = {}) {
