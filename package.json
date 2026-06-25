@@ -14,11 +14,16 @@
     "extensions": [
       "./src/index.js"
     ],
+    "hooks": [
+      "model_call_started",
+      "model_call_ended",
+      "llm_output"
+    ],
     "compat": {
       "pluginApi": "2026.6.1"
     },
     "install": {
-      "minHostVersion": "2026.6.1"
+      "minHostVersion": ">=2026.6.1"
     }
   },
   "scripts": {
