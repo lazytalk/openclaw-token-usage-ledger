@@ -189,12 +189,16 @@ export function createTokenUsageLedgerPlugin() {
 }
 
 function registerHook(api, hookName, handler) {
-  if (typeof api.registerHook === "function") {
-    api.registerHook(hookName, handler);
-    return;
-  }
   if (typeof api.on === "function") {
     api.on(hookName, handler);
+    return;
+  }
+  if (typeof api.registerHook === "function") {
+    api.registerHook(hookName, handler, {
+      name: hookName,
+      events: [hookName]
+    });
+    return;
   }
 }
 
