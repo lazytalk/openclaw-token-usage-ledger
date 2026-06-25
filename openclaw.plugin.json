@@ -1,4 +1,5 @@
 {
+  "id": "token-usage-ledger",
   "name": "openclaw-token-usage-ledger",
   "version": "0.1.0",
   "description": "OpenClaw plugin that records model token usage events to SQLite and reports usage by user, model, channel, source, and time.",
