@@ -12,3 +12,14 @@ test("package.json declares OpenClaw hooks and a semver floor", () => {
   ]);
   assert.equal(packageJson.openclaw.install.minHostVersion, ">=2026.6.1");
 });
+
+test("openclaw.plugin.json declares required native manifest fields", () => {
+  const manifest = JSON.parse(readFileSync(new URL("../openclaw.plugin.json", import.meta.url), "utf8"));
+
+  assert.equal(manifest.id, "token-usage-ledger");
+  assert.deepEqual(manifest.configSchema, {
+    type: "object",
+    additionalProperties: false,
+    properties: {}
+  });
+});
