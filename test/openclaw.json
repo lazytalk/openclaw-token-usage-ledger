@@ -1,0 +1,839 @@
+{
+  "agents": {
+    "defaults": {
+      "workspace": "/Users/henrywang/.openclaw/workspace",
+      "models": {
+        "kwevllm//models/qwen3.6-35b-a3b-fp8": {},
+        "microsoft-foundry/gpt-5.5": {},
+        "microsoft-foundry/gpt-5.4": {},
+        "microsoft-foundry/grok-4.3": {},
+        "bailian-token-plan/qwen3.7-max": {},
+        "bailian-token-plan/qwen3.7-plus": {},
+        "bailian-token-plan/qwen3.6-plus": {},
+        "bailian-token-plan/qwen3.6-flash": {},
+        "bailian-token-plan/deepseek-v4-pro": {},
+        "bailian-token-plan/deepseek-v4-flash": {},
+        "bailian-token-plan/deepseek-v3.2": {},
+        "bailian-token-plan/kimi-k2.6": {},
+        "bailian-token-plan/kimi-k2.5": {},
+        "bailian-token-plan/glm-5.1": {},
+        "bailian-token-plan/glm-5": {},
+        "bailian-token-plan/MiniMax-M2.5": {}
+      },
+      "model": "kwevllm//models/qwen3.6-35b-a3b-fp8",
+      "memorySearch": {
+        "enabled": false
+      },
+      "reasoningDefault": "on"
+    },
+    "list": [
+      {
+        "id": "main",
+        "default": true,
+        "name": "Main Agent",
+        "workspace": "/Users/henrywang/.openclaw/workspace",
+        "tools": {
+          "alsoAllow": [
+            "browser",
+            "feishu_bitable_app",
+            "feishu_bitable_app_table",
+            "feishu_bitable_app_table_field",
+            "feishu_bitable_app_table_record",
+            "feishu_bitable_app_table_view",
+            "feishu_calendar_calendar",
+            "feishu_calendar_event",
+            "feishu_calendar_event_attendee",
+            "feishu_calendar_freebusy",
+            "feishu_chat",
+            "feishu_chat_members",
+            "feishu_create_doc",
+            "feishu_doc_comments",
+            "feishu_doc_media",
+            "feishu_drive_file",
+            "feishu_fetch_doc",
+            "feishu_get_user",
+            "feishu_im_bot_image",
+            "feishu_im_user_fetch_resource",
+            "feishu_im_user_get_messages",
+            "feishu_im_user_get_thread_messages",
+            "feishu_im_user_message",
+            "feishu_im_user_search_messages",
+            "feishu_oauth",
+            "feishu_oauth_batch_auth",
+            "feishu_search_doc_wiki",
+            "feishu_search_user",
+            "feishu_sheet",
+            "feishu_task_comment",
+            "feishu_task_subtask",
+            "feishu_task_task",
+            "feishu_task_agent",
+            "feishu_task_attachment",
+            "feishu_task_tasklist",
+            "feishu_update_doc",
+            "feishu_wiki_space",
+            "feishu_wiki_space_node"
+          ]
+        }
+      },
+      {
+        "id": "learning",
+        "name": "Learning Agent",
+        "workspace": "/Users/henrywang/.openclaw/workspace-learning",
+        "model": {
+          "primary": "bailian-token-plan/qwen3.6-plus",
+          "fallbacks": [
+            "kwevllm//models/qwen3.6-35b-a3b-fp8"
+          ]
+        },
+        "tools": {
+          "alsoAllow": [
+            "browser",
+            "feishu_bitable_app",
+            "feishu_bitable_app_table",
+            "feishu_bitable_app_table_field",
+            "feishu_bitable_app_table_record",
+            "feishu_bitable_app_table_view",
+            "feishu_calendar_calendar",
+            "feishu_calendar_event",
+            "feishu_calendar_event_attendee",
+            "feishu_calendar_freebusy",
+            "feishu_chat",
+            "feishu_chat_members",
+            "feishu_create_doc",
+            "feishu_doc_comments",
+            "feishu_doc_media",
+            "feishu_drive_file",
+            "feishu_fetch_doc",
+            "feishu_get_user",
+            "feishu_im_bot_image",
+            "feishu_im_user_fetch_resource",
+            "feishu_im_user_get_messages",
+            "feishu_im_user_get_thread_messages",
+            "feishu_im_user_message",
+            "feishu_im_user_search_messages",
+            "feishu_oauth",
+            "feishu_oauth_batch_auth",
+            "feishu_search_doc_wiki",
+            "feishu_search_user",
+            "feishu_sheet",
+            "feishu_task_comment",
+            "feishu_task_subtask",
+            "feishu_task_task",
+            "feishu_task_agent",
+            "feishu_task_attachment",
+            "feishu_task_tasklist",
+            "feishu_update_doc",
+            "feishu_wiki_space",
+            "feishu_wiki_space_node"
+          ]
+        }
+      },
+      {
+        "id": "life",
+        "name": "Life Agent",
+        "workspace": "/Users/henrywang/.openclaw/workspace-life",
+        "model": {
+          "primary": "bailian-token-plan/qwen3.6-plus",
+          "fallbacks": [
+            "kwevllm//models/qwen3.6-35b-a3b-fp8"
+                  ]
+        },
+        "tools": {
+          "alsoAllow": [
+            "browser",
+            "feishu_bitable_app",
+            "feishu_bitable_app_table",
+            "feishu_bitable_app_table_field",
+            "feishu_bitable_app_table_record",
+            "feishu_bitable_app_table_view",
+            "feishu_calendar_calendar",
+            "feishu_calendar_event",
+            "feishu_calendar_event_attendee",
+            "feishu_calendar_freebusy",
+            "feishu_chat",
+            "feishu_chat_members",
+            "feishu_create_doc",
+            "feishu_doc_comments",
+            "feishu_doc_media",
+            "feishu_drive_file",
+            "feishu_fetch_doc",
+            "feishu_get_user",
+            "feishu_im_bot_image",
+            "feishu_im_user_fetch_resource",
+            "feishu_im_user_get_messages",
+            "feishu_im_user_get_thread_messages",
+            "feishu_im_user_message",
+            "feishu_im_user_search_messages",
+            "feishu_oauth",
+            "feishu_oauth_batch_auth",
+            "feishu_search_doc_wiki",
+            "feishu_search_user",
+            "feishu_sheet",
+            "feishu_task_comment",
+            "feishu_task_subtask",
+            "feishu_task_task",
+            "feishu_task_agent",
+            "feishu_task_attachment",
+            "feishu_task_tasklist",
+            "feishu_update_doc",
+            "feishu_wiki_space",
+            "feishu_wiki_space_node"
+          ]
+        }
+      }
+    ]
+  },
+  "gateway": {
+    "mode": "local",
+    "auth": {
+      "mode": "token",
+      "token": {
+        "source": "env",
+        "provider": "default",
+        "id": "GATEWAY_AUTH_TOKEN"
+      }
+    },
+    "port": 18789,
+    "bind": "loopback",
+    "tailscale": {
+      "mode": "off",
+      "resetOnExit": false
+    },
+    "controlUi": {
+      "allowInsecureAuth": true
+    },
+    "nodes": {
+      "denyCommands": [
+        "camera.snap",
+        "camera.clip",
+        "screen.record",
+        "contacts.add",
+        "calendar.add",
+        "reminders.add",
+        "sms.send",
+        "sms.search"
+      ]
+    }
+  },
+  "session": {
+    "dmScope": "per-channel-peer"
+  },
+  "tools": {
+    "profile": "full",
+    "web": {
+      "search": {
+        "provider": "searxng"
+      }
+    },
+    "exec": {
+      "security": "full",
+      "ask": "off"
+    }
+  },
+  "models": {
+    "providers": {
+      "microsoft-foundry": {
+        "baseUrl": "https://kweopenclawfoundrydev.cognitiveservices.azure.com/openai/v1",
+        "api": "openai-responses",
+        "authHeader": false,
+        "apiKey": {
+          "source": "env",
+          "provider": "default",
+          "id": "MSFT_FOUNDRY_API_KEY"
+        },
+        "models": [
+          {
+            "id": "gpt-5.5",
+            "name": "gpt-5.5",
+            "api": "openai-responses",
+            "reasoning": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 5,
+              "output": 30,
+              "cacheRead": 0.5,
+              "cacheWrite": 0
+            },
+            "contextWindow": 1024000,
+            "maxTokens": 16384,
+            "compat": {
+              "supportsStore": false,
+              "maxTokensField": "max_tokens"
+            }
+          },
+          {
+            "id": "gpt-5.4",
+            "name": "gpt-5.4",
+            "api": "openai-responses",
+            "reasoning": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 5,
+              "output": 25,
+              "cacheRead": 0.5,
+              "cacheWrite": 0
+            },
+            "contextWindow": 1024000,
+            "maxTokens": 16384,
+            "compat": {
+              "supportsStore": false,
+              "maxTokensField": "max_tokens"
+            }
+          },
+          {
+            "id": "grok-4.3",
+            "name": "grok-4.3",
+            "api": "openai-responses",
+            "reasoning": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 1.25,
+              "output": 2.5,
+              "cacheRead": 0.5,
+              "cacheWrite": 0
+            },
+            "contextWindow": 256000,
+            "maxTokens": 16384,
+            "compat": {
+              "supportsStore": false,
+              "maxTokensField": "max_tokens"
+            }
+          }
+        ]
+      },
+      "dashscope": {
+        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "api": "openai-completions",
+        "authHeader": false,
+        "apiKey": {
+          "source": "env",
+          "provider": "default",
+          "id": "DASHSCOPE_API_KEY"
+        },
+        "models": [
+          {
+            "id": "qwen3.6-plus",
+            "name": "qwen3.6-plus",
+            "api": "openai-completions",
+            "reasoning": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 2,
+              "output": 12,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 128000,
+            "maxTokens": 16384
+          },
+          {
+            "id": "qwen3.7-max",
+            "name": "qwen3.7-max",
+            "api": "openai-completions",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 12,
+              "output": 36,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 1024000,
+            "maxTokens": 16384
+          }
+        ]
+      },
+      "kwevllm": {
+        "baseUrl": "http://10.90.12.12:8005/v1",
+        "api": "openai-completions",
+        "apiKey": {
+          "source": "env",
+          "provider": "default",
+          "id": "KWEVLLM_API_KEY"
+        },
+        "models": [
+          {
+            "id": "/models/qwen3.6-35b-a3b-fp8",
+            "name": "/models/qwen3.6-35b-a3b-fp8",
+            "reasoning": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 128000,
+            "maxTokens": 8192
+          }
+        ]
+      },
+      "bailian-token-plan": {
+        "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+        "apiKey": {
+          "source": "env",
+          "provider": "default",
+          "id": "DASHSCOPE_API_KEY_TEAM_PLAN"
+        },
+        "api": "anthropic-messages",
+        "models": [
+          {
+            "id": "qwen3.7-max",
+            "name": "qwen3.7-max",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "contextWindow": 1000000,
+            "maxTokens": 65536,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "compat": {
+              "thinkingFormat": "openai"
+            }
+          },
+          {
+            "id": "qwen3.7-plus",
+            "name": "qwen3.7-plus",
+            "reasoning": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "contextWindow": 1000000,
+            "maxTokens": 65536,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "compat": {
+              "thinkingFormat": "openai"
+            }
+          },
+          {
+            "id": "qwen3.6-plus",
+            "name": "qwen3.6-plus",
+            "reasoning": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "contextWindow": 1000000,
+            "maxTokens": 65536,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "compat": {
+              "thinkingFormat": "openai"
+            }
+          },
+          {
+            "id": "qwen3.6-flash",
+            "name": "qwen3.6-flash",
+            "reasoning": false,
+            "input": [
+              "text",
+              "image"
+            ],
+            "contextWindow": 1000000,
+            "maxTokens": 32768,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "compat": {
+              "thinkingFormat": "openai"
+            }
+          },
+          {
+            "id": "deepseek-v4-pro",
+            "name": "deepseek-v4-pro",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "contextWindow": 163840,
+            "maxTokens": 32768,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            }
+          },
+          {
+            "id": "deepseek-v4-flash",
+            "name": "deepseek-v4-flash",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "contextWindow": 163840,
+            "maxTokens": 16384,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            }
+          },
+          {
+            "id": "deepseek-v3.2",
+            "name": "deepseek-v3.2",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "contextWindow": 163840,
+            "maxTokens": 16384,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "compat": {
+              "thinkingFormat": "openai"
+            }
+          },
+          {
+            "id": "kimi-k2.6",
+            "name": "kimi-k2.6",
+            "reasoning": false,
+            "input": [
+              "text",
+              "image"
+            ],
+            "contextWindow": 262144,
+            "maxTokens": 32768,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "compat": {
+              "thinkingFormat": "openai"
+            }
+          },
+          {
+            "id": "kimi-k2.5",
+            "name": "kimi-k2.5",
+            "reasoning": false,
+            "input": [
+              "text",
+              "image"
+            ],
+            "contextWindow": 262144,
+            "maxTokens": 16384,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "compat": {
+              "thinkingFormat": "openai"
+            }
+          },
+          {
+            "id": "glm-5.1",
+            "name": "glm-5.1",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "contextWindow": 202752,
+            "maxTokens": 16384,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "compat": {
+              "thinkingFormat": "openai"
+            }
+          },
+          {
+            "id": "glm-5",
+            "name": "glm-5",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "contextWindow": 202752,
+            "maxTokens": 16384,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "compat": {
+              "thinkingFormat": "openai"
+            }
+          },
+          {
+            "id": "MiniMax-M2.5",
+            "name": "MiniMax-M2.5",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "contextWindow": 204800,
+            "maxTokens": 131072,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            }
+          }
+        ]
+      }
+    }
+  },
+  "wizard": {
+    "lastRunAt": "2026-06-10T03:31:17.845Z",
+    "lastRunVersion": "2026.6.1",
+    "lastRunCommand": "doctor",
+    "lastRunMode": "local"
+  },
+  "meta": {
+    "lastTouchedVersion": "2026.6.1",
+    "lastTouchedAt": "2026-06-10T11:21:29.855Z"
+  },
+  "plugins": {
+    "entries": {
+      "microsoft-foundry": {
+        "enabled": true
+      },
+      "qwen": {
+        "enabled": true
+      },
+      "feishu": {
+        "enabled": false
+      },
+      "searxng": {
+        "config": {
+          "webSearch": {
+            "baseUrl": "http://localhost:8888"
+          }
+        },
+        "enabled": true
+      },
+      "openclaw-weixin": {
+        "enabled": true
+      },
+      "openclaw-lark": {
+        "enabled": true
+      },
+      "token-usage-ledger": {
+        "enabled": true,
+        "hooks": {
+                "allowConversationAccess": true
+        },
+        "config": {
+                "dbPath": "/Users/henrywang/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite"
+        }
+      }
+    },
+    "allow": [
+      "openclaw-lark",
+      "microsoft-foundry",
+      "searxng",
+      "memory-core",
+      "openclaw-weixin",
+      "token-usage-ledger",
+      "qwen",
+      "feishu",
+      "browser"
+    ],
+    "bundledDiscovery": "compat"
+  },
+  "skills": {
+    "entries": {
+      "camsnap": {
+        "enabled": false
+      },
+      "coding-agent": {
+        "enabled": false
+      },
+      "discord": {
+        "enabled": false
+      },
+      "eightctl": {
+        "enabled": false
+      },
+      "gemini": {
+        "enabled": false
+      },
+      "gifgrep": {
+        "enabled": false
+      },
+      "goplaces": {
+        "enabled": false
+      },
+      "imsg": {
+        "enabled": false
+      },
+      "mcporter": {
+        "enabled": false
+      },
+      "model-usage": {
+        "enabled": false
+      },
+      "obsidian": {
+        "enabled": false
+      },
+      "openai-whisper": {
+        "enabled": false
+      },
+      "openai-whisper-api": {
+        "enabled": false
+      },
+      "openhue": {
+        "enabled": false
+      },
+      "oracle": {
+        "enabled": false
+      },
+      "ordercli": {
+        "enabled": false
+      },
+      "peekaboo": {
+        "enabled": false
+      },
+      "sag": {
+        "enabled": false
+      },
+      "session-logs": {
+        "enabled": false
+      },
+      "sherpa-onnx-tts": {
+        "enabled": false
+      },
+      "slack": {
+        "enabled": false
+      },
+      "songsee": {
+        "enabled": false
+      },
+      "sonoscli": {
+        "enabled": false
+      },
+      "spotify-player": {
+        "enabled": false
+      },
+      "summarize": {
+        "enabled": false
+      },
+      "things-mac": {
+        "enabled": false
+      },
+      "tmux": {
+        "enabled": false
+      },
+      "trello": {
+        "enabled": false
+      },
+      "video-frames": {
+        "enabled": false
+      },
+      "voice-call": {
+        "enabled": false
+      },
+      "wacli": {
+        "enabled": false
+      },
+      "xurl": {
+        "enabled": false
+      }
+    }
+  },
+  "channels": {
+    "feishu": {
+      "enabled": true,
+      "appId": "cli_a93a9475f0b81bc3",
+      "appSecret": {
+        "source": "env",
+        "provider": "default",
+        "id": "CHANNEL_FEISHU_APP_SECRET"
+      },
+      "connectionMode": "websocket",
+      "domain": "feishu",
+      "groupPolicy": "open",
+      "streaming": true,
+      "blockStreaming": true
+    },
+    "openclaw-weixin": {
+      "enabled": true,
+      "channelConfigUpdatedAt": "2026-06-05T05:32:47.236Z"
+    }
+  },
+  "bindings": [
+    {
+      "type": "route",
+      "agentId": "main",
+      "match": {
+        "channel": "openclaw-weixin",
+        "accountId": "71ebf0f5e402-im-bot-im-bot"
+      }
+    },
+    {
+      "type": "route",
+      "agentId": "learning",
+      "match": {
+        "channel": "openclaw-weixin",
+        "accountId": "fa919cb57826-im-bot-im-bot"
+      }
+    },
+    {
+      "type": "route",
+      "agentId": "life",
+      "match": {
+        "channel": "openclaw-weixin",
+        "accountId": "d91c72e53bfa-im-bot-im-bot"
+      }
+    }
+  ],
+  "commands": {
+    "ownerAllowFrom": [
+      "ou_5483d4c149c7b1ef00ea7297d41256da"
+    ]
+  },
+  "browser": {
+    "enabled": true,
+    "defaultProfile": "openclaw",
+    "headless": false
+  }
+}
