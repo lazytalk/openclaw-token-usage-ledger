@@ -33,6 +33,23 @@ test("normalizes camelCase and cache/reasoning details", () => {
   });
 });
 
+test("normalizes OpenClaw 2026.6.1 native usage fields", () => {
+  assert.deepEqual(normalizeUsage({
+    input: 101,
+    output: 202,
+    cacheRead: 11,
+    cacheWrite: 12,
+    total: 303
+  }), {
+    inputTokens: 101,
+    outputTokens: 202,
+    totalTokens: 303,
+    cacheReadTokens: 11,
+    cacheWriteTokens: 12,
+    reasoningTokens: 0
+  });
+});
+
 test("handles missing usage", () => {
   assert.deepEqual(normalizeUsage(), {
     inputTokens: 0,

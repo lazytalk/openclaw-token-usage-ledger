@@ -20,11 +20,88 @@ export function createTokenUsageLedgerPlugin() {
   return {
     id: "token-usage-ledger",
     name: "Token Usage Ledger",
+    description: "Durable SQLite token accounting for OpenClaw model calls.",
     register(api = {}) {
-      const config = { ...defaultConfig, ...(api.config ?? {}) };
+      const config = { ...defaultConfig, ...(api.pluginConfig ?? api.config ?? {}) };
       const db = createUsageDb(config.dbPath);
+      const modelCallStarted = new Map();
 
-      api.on?.("llm_output", async (event = {}, ctx = {}) => {
+      registerHook(api, "model_call_started", (event = {}, ctx = {}) => {
+        const key = buildCallKey(event, ctx);
+        modelCallStarted.set(key, new Date().toISOString());
+      });
+
+      registerHook(api, "model_call_ended", (event = {}, ctx = {}) => {
+        const key = buildCallKey(event, ctx);
+        const startedAt = modelCallStarted.get(key);
+        const callMeta = {
+          startedAt: typeof startedAt === "string" ? startedAt : startedAt?.startedAt,
+          endedAt: new Date().toISOString(),
+          durationMs: event.durationMs ?? null,
+          upstreamRequestIdHash: event.upstreamRequestIdHash ?? null,
+          outcome: event.outcome ?? null,
+          errorCode: event.errorCategory ?? event.failureKind ?? null
+        };
+        modelCallStarted.set(key, callMeta);
+        if (event.outcome === "error") {
+          try {
+            const actor = extractIdentity(event, ctx);
+            db.insertUsageEvent({
+              id: buildEventId(event, ctx),
+              created_at: new Date().toISOString(),
+              started_at: callMeta.startedAt ?? null,
+              ended_at: callMeta.endedAt,
+              duration_ms: callMeta.durationMs,
+              gateway_profile: ctx.gatewayProfile ?? event.gatewayProfile ?? process.env.OPENCLAW_PROFILE ?? null,
+              agent_id: ctx.agentId ?? event.agentId ?? null,
+              agent_name: ctx.agentName ?? event.agentName ?? null,
+              runtime_id: ctx.runtimeId ?? event.runtimeId ?? null,
+              platform: actor.platform,
+              channel_name: actor.channelName,
+              platform_user_id: actor.platformUserId,
+              platform_user_display_name: actor.platformUserDisplayName,
+              platform_tenant_id: actor.platformTenantId,
+              platform_conversation_id: actor.platformConversationId,
+              platform_message_id: actor.platformMessageId,
+              thread_id: actor.threadId,
+              session_key: ctx.sessionKey ?? event.sessionKey ?? null,
+              session_id: ctx.sessionId ?? event.sessionId ?? null,
+              run_id: ctx.runId ?? event.runId ?? null,
+              turn_id: ctx.turnId ?? event.turnId ?? null,
+              request_id: event.requestIdHash ?? event.requestId ?? event.callId ?? null,
+              provider_request_id: event.providerRequestId ?? event.upstreamRequestIdHash ?? null,
+              call_source: classifyCallSource(event, ctx),
+              provider: event.provider ?? ctx.provider ?? null,
+              model: event.model ?? ctx.model ?? null,
+              input_tokens: 0,
+              output_tokens: 0,
+              total_tokens: 0,
+              cache_read_tokens: 0,
+              cache_write_tokens: 0,
+              reasoning_tokens: 0,
+              estimated_cost_usd: 0,
+              input_cost_usd: 0,
+              output_cost_usd: 0,
+              cache_cost_usd: 0,
+              cost_mode: "unknown",
+              context_window: event.contextWindow ?? event.contextTokenBudget ?? null,
+              status: "error",
+              error_code: callMeta.errorCode,
+              error_message: event.errorMessage ?? null,
+              retry_count: event.retryCount ?? 0,
+              raw_usage_json: null,
+              metadata_json: JSON.stringify({
+                eventKeys: Object.keys(event ?? {}),
+                contextKeys: Object.keys(ctx ?? {})
+              })
+            });
+          } catch (error) {
+            api.logger?.warn?.("token-usage-ledger failed to record failed model call", error);
+          }
+        }
+      });
+
+      registerHook(api, "llm_output", async (event = {}, ctx = {}) => {
         try {
           const rawUsage = event.usage ?? event.rawUsage ?? event.response?.usage;
           if (!rawUsage) return;
@@ -34,6 +111,7 @@ export function createTokenUsageLedgerPlugin() {
           const callSource = classifyCallSource(event, ctx);
           const provider = event.provider ?? ctx.provider ?? null;
           const model = event.model ?? ctx.model ?? null;
+          const callMeta = modelCallStarted.get(buildCallKey(event, ctx));
           const cost = calculateCost({
             provider,
             model,
@@ -47,10 +125,10 @@ export function createTokenUsageLedgerPlugin() {
           db.insertUsageEvent({
             id: buildEventId(event, ctx),
             created_at: new Date().toISOString(),
-            started_at: event.startedAt ?? ctx.startedAt ?? null,
-            ended_at: event.endedAt ?? new Date().toISOString(),
-            duration_ms: event.durationMs ?? ctx.durationMs ?? null,
-            time_to_first_token_ms: event.timeToFirstTokenMs ?? null,
+            started_at: event.startedAt ?? callMeta?.startedAt ?? ctx.startedAt ?? null,
+            ended_at: event.endedAt ?? callMeta?.endedAt ?? new Date().toISOString(),
+            duration_ms: event.durationMs ?? callMeta?.durationMs ?? ctx.durationMs ?? null,
+            time_to_first_token_ms: event.timeToFirstTokenMs ?? event.timeToFirstByteMs ?? null,
             gateway_profile: ctx.gatewayProfile ?? event.gatewayProfile ?? process.env.OPENCLAW_PROFILE ?? null,
             agent_id: ctx.agentId ?? event.agentId ?? null,
             agent_name: ctx.agentName ?? event.agentName ?? null,
@@ -67,8 +145,8 @@ export function createTokenUsageLedgerPlugin() {
             session_id: ctx.sessionId ?? event.sessionId ?? null,
             run_id: ctx.runId ?? event.runId ?? null,
             turn_id: ctx.turnId ?? event.turnId ?? null,
-            request_id: event.requestIdHash ?? event.requestId ?? null,
-            provider_request_id: event.providerRequestId ?? null,
+            request_id: event.requestIdHash ?? event.requestId ?? event.callId ?? null,
+            provider_request_id: event.providerRequestId ?? event.upstreamRequestIdHash ?? callMeta?.upstreamRequestIdHash ?? null,
             call_source: callSource,
             provider,
             model,
@@ -89,8 +167,8 @@ export function createTokenUsageLedgerPlugin() {
             had_tool_calls: toolCallCount > 0 ? 1 : 0,
             tool_call_count: toolCallCount,
             tool_names_json: toolNames.length ? JSON.stringify(toolNames) : null,
-            status: event.status ?? "success",
-            error_code: event.errorCode ?? null,
+            status: event.status ?? (callMeta?.outcome === "error" ? "error" : "success"),
+            error_code: event.errorCode ?? callMeta?.errorCode ?? null,
             error_message: event.errorMessage ?? null,
             retry_count: event.retryCount ?? 0,
             prompt_hash: null,
@@ -108,4 +186,25 @@ export function createTokenUsageLedgerPlugin() {
       });
     }
   };
+}
+
+function registerHook(api, hookName, handler) {
+  if (typeof api.registerHook === "function") {
+    api.registerHook(hookName, handler);
+    return;
+  }
+  if (typeof api.on === "function") {
+    api.on(hookName, handler);
+  }
+}
+
+function buildCallKey(event = {}, ctx = {}) {
+  return [
+    ctx.runId ?? event.runId,
+    event.callId,
+    ctx.sessionId ?? event.sessionId,
+    ctx.sessionKey ?? event.sessionKey,
+    event.provider ?? ctx.provider,
+    event.model ?? ctx.model
+  ].map((value) => value ?? "").join("|");
 }

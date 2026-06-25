@@ -92,6 +92,13 @@ openclaw cron create "0 0 * * *" \
   --to "<target>"
 ```
 
-## Notes
+## OpenClaw 2026.6.1 Compatibility
 
-The plugin exports a default object with `id`, `name`, and `register(api)`. If your installed OpenClaw version requires a specific SDK wrapper such as `definePluginEntry`, wrap `createTokenUsageLedgerPlugin()` in that SDK helper in `src/index.js`.
+This plugin targets OpenClaw `2026.6.1 (2e08f0f)`.
+
+Compatibility notes from that source revision:
+
+- `llm_output`, `model_call_started`, and `model_call_ended` are supported hook names.
+- Plugin entries may use the canonical `definePluginEntry` helper, but OpenClaw also loads the same normalized object shape exported by this package: `id`, `name`, `description`, and `register(api)`.
+- The native hook API is `api.registerHook(...)`. This plugin uses that and keeps a fallback to `api.on(...)` only for older experimental runtimes.
+- `llm_output.usage` uses OpenClaw-native fields: `input`, `output`, `cacheRead`, `cacheWrite`, and `total`. The normalizer supports those fields plus common provider variants.

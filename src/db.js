@@ -78,6 +78,8 @@ export function buildEventId(event = {}, ctx = {}) {
   if (explicit) return String(explicit);
   const stableParts = [
     event.providerRequestId,
+    event.upstreamRequestIdHash,
+    event.callId,
     ctx.sessionKey ?? event.sessionKey,
     ctx.runId ?? event.runId,
     ctx.turnId ?? event.turnId,

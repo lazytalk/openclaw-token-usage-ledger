@@ -7,23 +7,27 @@ export function normalizeUsage(raw = {}) {
   const inputTokens = numberOrZero(
     raw.input_tokens ??
       raw.inputTokens ??
+      raw.input ??
       raw.prompt_tokens ??
       raw.promptTokens
   );
   const outputTokens = numberOrZero(
     raw.output_tokens ??
       raw.outputTokens ??
+      raw.output ??
       raw.completion_tokens ??
       raw.completionTokens
   );
   const totalTokens = numberOrZero(
     raw.total_tokens ??
       raw.totalTokens ??
+      raw.total ??
       inputTokens + outputTokens
   );
   const cacheReadTokens = numberOrZero(
     raw.cache_read_tokens ??
       raw.cacheReadTokens ??
+      raw.cacheRead ??
       raw.cached_tokens ??
       raw.cachedTokens ??
       raw.cache_read_input_tokens ??
@@ -33,7 +37,8 @@ export function normalizeUsage(raw = {}) {
   );
   const cacheWriteTokens = numberOrZero(
     raw.cache_write_tokens ??
-      raw.cacheWriteTokens
+      raw.cacheWriteTokens ??
+      raw.cacheWrite
   );
   const reasoningTokens = numberOrZero(
     raw.reasoning_tokens ??
