@@ -1,0 +1,25 @@
+{
+  "name": "openclaw-token-usage-ledger",
+  "version": "0.1.0",
+  "description": "Durable SQLite token usage ledger and report command for OpenClaw.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "bin": {
+    "openclaw-token-usage-report": "src/report.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "report": "node src/report.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
