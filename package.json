@@ -10,6 +10,17 @@
   "bin": {
     "openclaw-token-usage-report": "src/report.js"
   },
+  "openclaw": {
+    "extensions": [
+      "./src/index.js"
+    ],
+    "compat": {
+      "pluginApi": "2026.6.1"
+    },
+    "install": {
+      "minHostVersion": "2026.6.1"
+    }
+  },
   "scripts": {
     "test": "node --test",
     "report": "node src/report.js"

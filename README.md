@@ -58,6 +58,14 @@ openclaw gateway restart
 
 The production SQLite writer uses `better-sqlite3`. The local unit tests avoid native dependencies where possible, but a real OpenClaw install should run `npm install` first.
 
+For OpenClaw `2026.6.1`, dependency installation depends on the install mode:
+
+- `git:` plugin installs run `npm install --omit=dev` automatically before OpenClaw loads the plugin.
+- npm/package installs are installed into OpenClaw's managed npm root automatically.
+- Raw local directory installs should be treated as source installs; run `npm install` in this repo first so `better-sqlite3` exists.
+
+If `better-sqlite3` cannot use a prebuilt binary on your remote machine, the machine needs a working native build toolchain for Node modules.
+
 ## Report Command
 
 ```bash
