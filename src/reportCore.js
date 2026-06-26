@@ -47,7 +47,7 @@ export function summarizeRows(rows) {
     if (row.status === "success" && (!anomalies.slowestSuccessfulCall || numeric(row.duration_ms) > numeric(anomalies.slowestSuccessfulCall.duration_ms))) {
       anomalies.slowestSuccessfulCall = row;
     }
-    if (row.status && row.status !== "success") anomalies.failedCalls.push(row);
+    if (row.status && row.status !== "success" && row.status !== "no-usage") anomalies.failedCalls.push(row);
   }
 
   for (const [sessionKey, calls] of sessions) {
@@ -137,7 +137,7 @@ function emptyTotals() {
 
 function addTotals(totals, row) {
   totals.calls += 1;
-  if (row.status && row.status !== "success") totals.failedCalls += 1;
+  if (row.status && row.status !== "success" && row.status !== "no-usage") totals.failedCalls += 1;
   totals.inputTokens += numeric(row.input_tokens);
   totals.outputTokens += numeric(row.output_tokens);
   totals.totalTokens += numeric(row.total_tokens);
