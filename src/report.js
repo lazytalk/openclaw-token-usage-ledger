@@ -3,12 +3,13 @@ import { fileURLToPath } from "node:url";
 import { createUsageDb, defaultDbPath, expandPath } from "./db.js";
 import { formatMarkdownReport, formatTextReport, parseSince, summarizeRows } from "./reportCore.js";
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const args = {
     db: defaultDbPath(),
     since: "24h",
     from: null,
     to: new Date().toISOString(),
+    session: null,
     timezone: "UTC",
     format: "text",
     top: 10,
@@ -29,6 +30,7 @@ function parseArgs(argv) {
     else if (key === "since") args.since = value;
     else if (key === "from") args.from = value;
     else if (key === "to") args.to = value;
+    else if (key === "session") args.session = value;
     else if (key === "timezone") args.timezone = value;
     else if (key === "format") args.format = value;
     else if (key === "top") args.top = Number(value) || 10;
@@ -38,7 +40,7 @@ function parseArgs(argv) {
   return args;
 }
 
-function buildWhere(args) {
+export function buildWhere(args) {
   const clauses = [];
   const params = {};
   if (args.from) {
@@ -48,6 +50,10 @@ function buildWhere(args) {
   if (args.to) {
     clauses.push("created_at <= @to");
     params.to = args.to;
+  }
+  if (args.session) {
+    clauses.push("(session_key = @session OR session_id = @session)");
+    params.session = args.session;
   }
   return {
     where: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "",

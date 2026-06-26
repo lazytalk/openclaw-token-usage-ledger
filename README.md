@@ -135,6 +135,7 @@ Supported options:
 - `--since 24h`
 - `--from 2026-06-25T00:00:00`
 - `--to 2026-06-26T00:00:00`
+- `--session <session_key_or_id>`
 - `--timezone America/Phoenix`
 - `--format text | json | markdown`
 - `--top 10`
