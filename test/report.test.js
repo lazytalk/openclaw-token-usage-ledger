@@ -110,3 +110,42 @@ test("formats token values with commas and shows group token categories", () => 
   assert.match(report, /Cache tokens \(read\+write\): 100,000/);
   assert.match(report, /total 1,100,000 tokens \(input 750,000 \/ output 250,000 \/ cache 100,000\)/);
 });
+
+test("renders by session section with model drilldown", () => {
+  const report = formatMarkdownReport(
+    summarizeRows([
+      {
+        created_at: "2026-06-25T01:00:00Z",
+        session_key: "session-a",
+        provider: "openai",
+        model: "gpt-4.1",
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_read_tokens: 10,
+        cache_write_tokens: 0,
+        total_tokens: 160,
+        estimated_cost_usd: 0.001,
+        status: "success"
+      },
+      {
+        created_at: "2026-06-25T02:00:00Z",
+        session_key: "session-a",
+        provider: "anthropic",
+        model: "claude-sonnet",
+        input_tokens: 200,
+        output_tokens: 100,
+        cache_read_tokens: 40,
+        cache_write_tokens: 0,
+        total_tokens: 340,
+        estimated_cost_usd: 0.002,
+        status: "success"
+      }
+    ]),
+    { from: "a", to: "b", timezone: "UTC" }
+  );
+
+  assert.match(report, /By session/);
+  assert.match(report, /1\. session-a \/ total 500 tokens \(input 300 \/ output 150 \/ cache 50\)/);
+  assert.match(report, /- anthropic:claude-sonnet: total 340 \(input 200 \/ output 100 \/ cache 40\)/);
+  assert.match(report, /- openai:gpt-4.1: total 160 \(input 100 \/ output 50 \/ cache 10\)/);
+});

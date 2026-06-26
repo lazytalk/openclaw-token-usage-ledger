@@ -14,7 +14,8 @@ export function summarizeRows(rows) {
     model: new Map(),
     source: new Map(),
     channel: new Map(),
-    hour: new Map()
+    hour: new Map(),
+    session: new Map()
   };
   const anomalies = {
     highestSingleCall: null,
@@ -33,6 +34,7 @@ export function summarizeRows(rows) {
     addToGroup(groups.source, row.call_source ?? "unknown", row);
     addToGroup(groups.channel, row.channel_name ?? row.platform ?? "unknown", row);
     addToGroup(groups.hour, hourKey(row.created_at), row);
+    addToSessionGroup(groups.session, row);
 
     if (row.session_key) sessions.set(row.session_key, (sessions.get(row.session_key) ?? 0) + 1);
     if (!anomalies.highestSingleCall || numeric(row.total_tokens) > numeric(anomalies.highestSingleCall.total_tokens)) {
@@ -58,7 +60,14 @@ export function summarizeRows(rows) {
 
   return {
     totals,
-    groups: Object.fromEntries(Object.entries(groups).map(([key, value]) => [key, sortedGroup(value)])),
+    groups: {
+      user: sortedGroup(groups.user),
+      model: sortedGroup(groups.model),
+      source: sortedGroup(groups.source),
+      channel: sortedGroup(groups.channel),
+      hour: sortedGroup(groups.hour),
+      session: sortedSessionGroup(groups.session)
+    },
     anomalies
   };
 }
@@ -87,6 +96,7 @@ export function formatTextReport(summary, { from, to, timezone = "UTC", top = 10
   appendGroup(lines, "By model", summary.groups.model, top);
   appendGroup(lines, "By source", summary.groups.source, top);
   appendGroup(lines, "By channel", summary.groups.channel, top);
+  appendSessionGroup(lines, "By session", summary.groups.session, top);
   appendAnomalies(lines, summary.anomalies);
   return lines.join("\n");
 }
@@ -114,6 +124,22 @@ function appendAnomalies(lines, anomalies) {
   lines.push(`- Slowest successful call: ${describeCall(anomalies.slowestSuccessfulCall, "duration_ms")}`);
   lines.push(`- Most active session: ${anomalies.mostActiveSession ? `${anomalies.mostActiveSession.sessionKey} (${anomalies.mostActiveSession.calls} calls)` : "none"}`);
   lines.push(`- Failed calls: ${anomalies.failedCalls.length}`);
+}
+
+function appendSessionGroup(lines, title, rows, top) {
+  lines.push(title);
+  for (const [index, row] of rows.slice(0, top).entries()) {
+    lines.push(
+      `${index + 1}. ${row.key} / total ${formatToken(row.totalTokens)} tokens (input ${formatToken(row.inputTokens)} / output ${formatToken(row.outputTokens)} / cache ${formatToken(row.cacheTokens)}) / $${row.estimatedCostUsd.toFixed(6)} / ${formatNumber(row.calls)} calls`
+    );
+    for (const model of row.models.slice(0, top)) {
+      lines.push(
+        `   - ${model.key}: total ${formatToken(model.totalTokens)} (input ${formatToken(model.inputTokens)} / output ${formatToken(model.outputTokens)} / cache ${formatToken(model.cacheTokens)}) / $${model.estimatedCostUsd.toFixed(6)} / ${formatNumber(model.calls)} calls`
+      );
+    }
+  }
+  if (!rows.length) lines.push("- none");
+  lines.push("");
 }
 
 function describeCall(row, metric = "total_tokens") {
@@ -178,6 +204,39 @@ function sortedGroup(map) {
   return [...map.values()].sort((a, b) => b.totalTokens - a.totalTokens || b.calls - a.calls);
 }
 
+function sortedSessionGroup(map) {
+  return [...map.values()]
+    .map((session) => ({
+      ...session,
+      models: sortedGroup(session.models)
+    }))
+    .sort((a, b) => b.totalTokens - a.totalTokens || b.calls - a.calls);
+}
+
+function addToSessionGroup(map, row) {
+  const key = sessionKey(row);
+  const current = map.get(key) ?? {
+    key,
+    calls: 0,
+    totalTokens: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheTokens: 0,
+    estimatedCostUsd: 0,
+    models: new Map()
+  };
+
+  current.calls += 1;
+  current.totalTokens += numeric(row.total_tokens);
+  current.inputTokens += numeric(row.input_tokens);
+  current.outputTokens += numeric(row.output_tokens);
+  current.cacheTokens += numeric(row.cache_read_tokens) + numeric(row.cache_write_tokens);
+  current.estimatedCostUsd += numeric(row.estimated_cost_usd);
+
+  addToGroup(current.models, `${row.provider ?? "unknown"}:${row.model ?? "unknown"}`, row);
+  map.set(key, current);
+}
+
 function userKey(row) {
   return [
     row.platform_user_display_name,
@@ -189,6 +248,10 @@ function userKey(row) {
 function hourKey(value) {
   if (!value) return "unknown";
   return String(value).slice(0, 13) + ":00";
+}
+
+function sessionKey(row) {
+  return row.session_key ?? row.session_id ?? "unknown";
 }
 
 function numeric(value) {
