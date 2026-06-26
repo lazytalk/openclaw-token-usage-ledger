@@ -124,6 +124,12 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           if (!rawUsage) {
             debugLog({
               event: "llm_output_no_usage",
+              usageValue: event.usage,
+              rawUsageValue: event.rawUsage,
+              responseUsageValue: event.response?.usage,
+              provider: event.provider ?? ctx.provider ?? null,
+              model: event.model ?? ctx.model ?? null,
+              channelId: ctx.channelId ?? event.channelId ?? null,
               eventKeys: Object.keys(event ?? {}),
               contextKeys: Object.keys(ctx ?? {})
             });
