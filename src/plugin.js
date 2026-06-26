@@ -4,7 +4,7 @@ import { resolve, dirname } from "path";
 import { buildEventId, createUsageDb, defaultDbPath } from "./db.js";
 import { normalizeUsage } from "./normalizeUsage.js";
 import { extractIdentity } from "./identity.js";
-import { classifyCallSource } from "./classifySource.js";
+import { classifyCallSource, parseImChannelPlatform } from "./classifySource.js";
 import { calculateCost } from "./cost.js";
 
 // Always write debug log to the plugin data dir; override with LEDGER_DEBUG_LOG env var.
@@ -279,7 +279,14 @@ function deriveRuntimeHints(event = {}, ctx = {}) {
   }
 
   if (!hints.channelName && typeof channelId === "string" && channelId.trim()) {
-    hints.channelName = channelId;
+    const imPlatform = parseImChannelPlatform(channelId);
+    if (imPlatform) {
+      hints.platform = hints.platform ?? "openclaw";
+      hints.channelName = imPlatform;
+      hints.source = hints.source ?? imPlatform;
+    } else {
+      hints.channelName = channelId;
+    }
   }
 
   if (!hints.source && typeof trigger === "string" && trigger.trim()) {
