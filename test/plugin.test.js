@@ -27,6 +27,7 @@ test("records a TUI model call with agent and source metadata", async () => {
   const plugin = createTokenUsageLedgerPlugin({
     createDb() {
       return {
+        query() { return []; },
         insertUsageEvent(row) {
           recordedRows.push(row);
         }

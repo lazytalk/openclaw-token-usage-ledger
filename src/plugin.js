@@ -107,7 +107,13 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       registerHook(api, "llm_output", async (event = {}, ctx = {}) => {
         try {
           const rawUsage = event.usage ?? event.rawUsage ?? event.response?.usage;
-          if (!rawUsage) return;
+          if (!rawUsage) {
+            api.logger?.warn?.("token-usage-ledger: llm_output fired but no usage field found", {
+              eventKeys: Object.keys(event ?? {}),
+              contextKeys: Object.keys(ctx ?? {})
+            });
+            return;
+          }
 
           const usage = normalizeUsage(rawUsage);
           const actor = extractIdentity(event, ctx);
