@@ -150,6 +150,17 @@ Healthy output should show `hookCount: 3` and no diagnostics about blocked `llm_
 
 ## Report Command
 
+For a git-clone install (most common on a deployed host), run directly with `node`:
+
+```bash
+node /path/to/openclaw-token-usage-ledger/src/report.js \
+  --db "$DB" \
+  --since 24h \
+  --format markdown
+```
+
+If the package was installed via npm or `openclaw plugins install`, the bin command is also available:
+
 ```bash
 openclaw-token-usage-report \
   --db "$DB" \
