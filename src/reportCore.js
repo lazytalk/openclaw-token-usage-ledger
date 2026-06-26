@@ -152,11 +152,34 @@ function appendCallBreakdown(lines, title, rows) {
   for (const [index, row] of rows.entries()) {
     const modelKey = `${row.provider ?? "unknown"}:${row.model ?? "unknown"}`;
     const cacheTokens = numeric(row.cache_read_tokens) + numeric(row.cache_write_tokens);
+    const tools = describeTools(row);
     lines.push(
-      `${index + 1}. ${row.created_at ?? "unknown"} / ${modelKey} / total ${formatToken(row.total_tokens)} (input ${formatToken(row.input_tokens)} / output ${formatToken(row.output_tokens)} / cache ${formatToken(cacheTokens)}) / $${numeric(row.estimated_cost_usd).toFixed(6)} / ${row.status ?? "unknown"}`
+      `${index + 1}. ${row.created_at ?? "unknown"} / ${modelKey} / total ${formatToken(row.total_tokens)} (input ${formatToken(row.input_tokens)} / output ${formatToken(row.output_tokens)} / cache ${formatToken(cacheTokens)}) / $${numeric(row.estimated_cost_usd).toFixed(6)} / ${row.status ?? "unknown"} / tools: ${tools}`
     );
   }
   lines.push("");
+}
+
+function describeTools(row) {
+  const names = parseToolNames(row.tool_names_json);
+  if (names.length) return names.join(", ");
+  const count = numeric(row.tool_call_count);
+  if (count > 0) return `${formatNumber(count)} call(s)`;
+  return "none";
+}
+
+function parseToolNames(value) {
+  if (Array.isArray(value)) {
+    return value.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim());
+  }
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim());
+  } catch {
+    return [];
+  }
 }
 
 function describeCall(row, metric = "total_tokens") {

@@ -162,6 +162,8 @@ test("renders per-call breakdown when call rows are provided", () => {
       cache_write_tokens: 0,
       total_tokens: 160,
       estimated_cost_usd: 0.001,
+      tool_names_json: JSON.stringify(["search_web", "read_file"]),
+      tool_call_count: 2,
       status: "success"
     },
     {
@@ -174,6 +176,7 @@ test("renders per-call breakdown when call rows are provided", () => {
       cache_write_tokens: 0,
       total_tokens: 320,
       estimated_cost_usd: 0.002,
+      tool_call_count: 1,
       status: "success"
     }
   ];
@@ -184,8 +187,8 @@ test("renders per-call breakdown when call rows are provided", () => {
   );
 
   assert.match(report, /Session calls/);
-  assert.match(report, /1\. 2026-06-25T01:00:00Z \/ openai:gpt-4.1 \/ total 160 \(input 100 \/ output 50 \/ cache 10\)/);
-  assert.match(report, /2\. 2026-06-25T01:01:00Z \/ openai:gpt-4.1 \/ total 320 \(input 200 \/ output 100 \/ cache 20\)/);
+  assert.match(report, /1\. 2026-06-25T01:00:00Z \/ openai:gpt-4.1 \/ total 160 \(input 100 \/ output 50 \/ cache 10\).*tools: search_web, read_file/);
+  assert.match(report, /2\. 2026-06-25T01:01:00Z \/ openai:gpt-4.1 \/ total 320 \(input 200 \/ output 100 \/ cache 20\).*tools: 1 call\(s\)/);
 });
 
 test("groups channel aliases under canonical channel name", () => {

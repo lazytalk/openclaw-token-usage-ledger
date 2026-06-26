@@ -84,6 +84,7 @@ export function runReport(argv = process.argv.slice(2)) {
 }
 
 function toCallSummary(row) {
+  const toolNames = parseToolNames(row.tool_names_json);
   return {
     id: row.id ?? null,
     createdAt: row.created_at ?? null,
@@ -95,8 +96,24 @@ function toCallSummary(row) {
     cacheWriteTokens: Number(row.cache_write_tokens) || 0,
     totalTokens: Number(row.total_tokens) || 0,
     estimatedCostUsd: Number(row.estimated_cost_usd) || 0,
+    toolCallCount: Number(row.tool_call_count) || 0,
+    toolNames,
     status: row.status ?? null
   };
+}
+
+function parseToolNames(value) {
+  if (Array.isArray(value)) {
+    return value.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim());
+  }
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim());
+  } catch {
+    return [];
+  }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
