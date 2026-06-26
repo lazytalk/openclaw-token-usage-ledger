@@ -6,6 +6,7 @@ import { normalizeUsage } from "./normalizeUsage.js";
 import { extractIdentity } from "./identity.js";
 import { classifyCallSource, parseImChannelPlatform, parseFeishuChannelId } from "./classifySource.js";
 import { calculateCost } from "./cost.js";
+import { normalizeChannelName } from "./normalizeChannel.js";
 
 // Always write debug log to the plugin data dir; override with LEDGER_DEBUG_LOG env var.
 const _defaultDebugLog = resolve(homedir(), ".openclaw-ops", "plugins", "token-usage-ledger", "debug.jsonl");
@@ -63,6 +64,8 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           try {
             const actor = extractIdentity(event, ctx);
             const callSource = classifyCallSource(event, ctx);
+            const rawChannelName = actor.channelName ?? runtimeHints.channelName;
+            const channelName = normalizeChannelName(rawChannelName) ?? rawChannelName;
             db.insertUsageEvent({
               id: buildEventId(event, ctx),
               created_at: new Date().toISOString(),
@@ -74,7 +77,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
               agent_name: ctx.agentName ?? event.agentName ?? (runtimeHints.agentId ? `agent:${runtimeHints.agentId}` : null),
               runtime_id: ctx.runtimeId ?? event.runtimeId ?? null,
               platform: actor.platform ?? runtimeHints.platform,
-              channel_name: actor.channelName ?? runtimeHints.channelName,
+              channel_name: channelName,
               platform_user_id: actor.platformUserId,
               platform_user_display_name: actor.platformUserDisplayName,
               platform_tenant_id: actor.platformTenantId,
@@ -107,9 +110,9 @@ export function createTokenUsageLedgerPlugin(options = {}) {
               error_message: event.errorMessage ?? null,
               retry_count: event.retryCount ?? 0,
               raw_usage_json: null,
-              metadata_json: JSON.stringify({
-                eventKeys: Object.keys(event ?? {}),
-                contextKeys: Object.keys(ctx ?? {})
+              metadata_json: buildMetadataJson(event, ctx, {
+                rawChannelName,
+                normalizedChannelName: channelName
               })
             });
           } catch (error) {
@@ -142,6 +145,8 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           const actor = extractIdentity(event, ctx);
           const runtimeHints = deriveRuntimeHints(event, ctx);
           const callSource = classifyCallSource(event, ctx);
+          const rawChannelName = actor.channelName ?? runtimeHints.channelName;
+          const channelName = normalizeChannelName(rawChannelName) ?? rawChannelName;
           const resolvedCallSource = callSource === "unknown" ? runtimeHints.source ?? callSource : callSource;
           const provider = event.provider ?? ctx.provider ?? null;
           const model = event.model ?? ctx.model ?? null;
@@ -168,7 +173,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             agent_name: ctx.agentName ?? event.agentName ?? (runtimeHints.agentId ? `agent:${runtimeHints.agentId}` : null),
             runtime_id: ctx.runtimeId ?? event.runtimeId ?? null,
             platform: actor.platform ?? runtimeHints.platform,
-            channel_name: actor.channelName ?? runtimeHints.channelName,
+            channel_name: channelName,
             platform_user_id: actor.platformUserId,
             platform_user_display_name: actor.platformUserDisplayName,
             platform_tenant_id: actor.platformTenantId,
@@ -209,9 +214,9 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             response_hash: null,
             preview: config.storePreview ? String(event.preview ?? "").slice(0, config.previewMaxChars) : null,
             raw_usage_json: (config.debugRawUsage && rawUsage) ? JSON.stringify(rawUsage) : null,
-            metadata_json: JSON.stringify({
-              eventKeys: Object.keys(event ?? {}),
-              contextKeys: Object.keys(ctx ?? {})
+            metadata_json: buildMetadataJson(event, ctx, {
+              rawChannelName,
+              normalizedChannelName: channelName
             })
           });
         } catch (error) {
@@ -246,6 +251,14 @@ function buildCallKey(event = {}, ctx = {}) {
     event.provider ?? ctx.provider,
     event.model ?? ctx.model
   ].map((value) => value ?? "").join("|");
+}
+
+function buildMetadataJson(event = {}, ctx = {}, extra = {}) {
+  return JSON.stringify({
+    eventKeys: Object.keys(event ?? {}),
+    contextKeys: Object.keys(ctx ?? {}),
+    ...extra
+  });
 }
 
 function deriveRuntimeHints(event = {}, ctx = {}) {

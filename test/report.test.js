@@ -187,3 +187,26 @@ test("renders per-call breakdown when call rows are provided", () => {
   assert.match(report, /1\. 2026-06-25T01:00:00Z \/ openai:gpt-4.1 \/ total 160 \(input 100 \/ output 50 \/ cache 10\)/);
   assert.match(report, /2\. 2026-06-25T01:01:00Z \/ openai:gpt-4.1 \/ total 320 \(input 200 \/ output 100 \/ cache 20\)/);
 });
+
+test("groups channel aliases under canonical channel name", () => {
+  const summary = summarizeRows([
+    {
+      created_at: "2026-06-25T01:00:00Z",
+      channel_name: "openclaw-weixin",
+      input_tokens: 100,
+      output_tokens: 20,
+      total_tokens: 120
+    },
+    {
+      created_at: "2026-06-25T02:00:00Z",
+      channel_name: "wechat",
+      input_tokens: 30,
+      output_tokens: 10,
+      total_tokens: 40
+    }
+  ]);
+
+  assert.equal(summary.groups.channel.length, 1);
+  assert.equal(summary.groups.channel[0].key, "wechat");
+  assert.equal(summary.groups.channel[0].totalTokens, 160);
+});

@@ -76,3 +76,48 @@ test("records a TUI model call with agent and source metadata", async () => {
   assert.equal(row.session_key, "agent:main:tui-123");
   assert.equal(row.raw_usage_json, JSON.stringify({ input: 41, output: 2, total: 43 }));
 });
+
+test("canonicalizes channel aliases like openclaw-weixin to wechat", async () => {
+  const handlers = {};
+  const recordedRows = [];
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent(row) {
+          recordedRows.push(row);
+        }
+      };
+    }
+  });
+
+  plugin.register({
+    pluginConfig: { dbPath: ":memory:" },
+    registerHook(name, handler) {
+      handlers[name] = handler;
+    },
+    logger: { warn() {} }
+  });
+
+  const context = {
+    sessionKey: "agent:main:wx-123",
+    messageProvider: "openclaw-weixin",
+    provider: "kwevllm",
+    model: "qwen"
+  };
+
+  await handlers.llm_output(
+    {
+      callId: "call-2",
+      usage: { input: 10, output: 2, total: 12 }
+    },
+    context
+  );
+
+  assert.equal(recordedRows.length, 1);
+  const row = recordedRows[0];
+  assert.equal(row.channel_name, "wechat");
+  const metadata = JSON.parse(row.metadata_json);
+  assert.equal(metadata.rawChannelName, "openclaw-weixin");
+  assert.equal(metadata.normalizedChannelName, "wechat");
+});

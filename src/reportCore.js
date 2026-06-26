@@ -1,3 +1,5 @@
+import { normalizeChannelName } from "./normalizeChannel.js";
+
 export function parseSince(value, now = new Date()) {
   if (!value) return null;
   const match = /^(\d+)([mhdw])$/.exec(value);
@@ -32,7 +34,8 @@ export function summarizeRows(rows) {
     addToGroup(groups.user, userKey(row), row);
     addToGroup(groups.model, `${row.provider ?? "unknown"}:${row.model ?? "unknown"}`, row);
     addToGroup(groups.source, row.call_source ?? "unknown", row);
-    addToGroup(groups.channel, row.channel_name ?? row.platform ?? "unknown", row);
+    const normalizedChannel = normalizeChannelName(row.channel_name) ?? row.channel_name;
+    addToGroup(groups.channel, normalizedChannel ?? row.platform ?? "unknown", row);
     addToGroup(groups.hour, hourKey(row.created_at), row);
     addToSessionGroup(groups.session, row);
 
