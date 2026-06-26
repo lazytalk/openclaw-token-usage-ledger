@@ -12,24 +12,32 @@ test("classifies TUI calls from runtime id", () => {
   assert.equal(source, "tui");
 });
 
-test("classifies WeChat calls from @im.wechat channelId", () => {
+test("classifies WeChat calls from @im.wechat channelId as user chat source", () => {
   const source = classifyCallSource({}, { channelId: "o9cq80x7h0yhlL0XY7Ivw0Fa3hdU@im.wechat" });
-  assert.equal(source, "wechat");
+  assert.equal(source, "user_chat");
 });
 
-test("classifies Lark/Feishu calls from @im.lark channelId", () => {
+test("classifies Lark/Feishu calls from @im.lark channelId as user chat source", () => {
   const source = classifyCallSource({}, { channelId: "abc123@im.lark" });
-  assert.equal(source, "lark");
+  assert.equal(source, "user_chat");
 });
 
-test("classifies Feishu calls from messageProvider", () => {
+test("classifies messageProvider calls as user chat source", () => {
   const source = classifyCallSource({}, { messageProvider: "feishu", channelId: "ou_5483d4c149c7b1ef00ea7297d41256da" });
-  assert.equal(source, "feishu");
+  assert.equal(source, "user_chat");
 });
 
-test("classifies Feishu calls from ou_ channelId prefix", () => {
+test("classifies Feishu calls from ou_ channelId prefix as user chat source", () => {
   const source = classifyCallSource({}, { channelId: "ou_5483d4c149c7b1ef00ea7297d41256da" });
-  assert.equal(source, "feishu");
+  assert.equal(source, "user_chat");
+});
+
+test("keeps tool followup higher priority than chat channel hints", () => {
+  const source = classifyCallSource(
+    { toolCallCount: 1, channelId: "o9cq80x7h0yhlL0XY7Ivw0Fa3hdU@im.wechat" },
+    { messageProvider: "openclaw-weixin" }
+  );
+  assert.equal(source, "tool_followup");
 });
 
 test("parseImChannelPlatform extracts platform from channelId", () => {

@@ -3,13 +3,11 @@ export function classifyCallSource(event = {}, ctx = {}) {
   const runtimeId = ctx.runtimeId ?? event.runtimeId ?? "";
   const channelId = ctx.channelId ?? event.channelId ?? "";
   const messageProvider = ctx.messageProvider ?? event.messageProvider ?? "";
+  const hasMessageProvider = typeof messageProvider === "string" && messageProvider.trim();
+  const hasImChannel = Boolean(parseImChannelPlatform(channelId) || parseFeishuChannelId(channelId));
+
   if (typeof sessionKey === "string" && sessionKey.includes(":tui-")) return "tui";
   if (typeof runtimeId === "string" && runtimeId.startsWith("tui-")) return "tui";
-  if (typeof messageProvider === "string" && messageProvider.trim()) return messageProvider.trim().toLowerCase();
-  const imPlatform = parseImChannelPlatform(channelId);
-  if (imPlatform) return imPlatform;
-  const feishuPlatform = parseFeishuChannelId(channelId);
-  if (feishuPlatform) return feishuPlatform;
   if (ctx.cronJobId || event.cronJobId || ctx.cron || event.cron) return "cron_job";
   if (ctx.compaction || event.compaction || event.reason === "compaction") return "compaction";
   if (ctx.memoryFlush || event.memoryFlush || event.reason === "memory_flush") return "memory_flush";
@@ -17,7 +15,7 @@ export function classifyCallSource(event = {}, ctx = {}) {
   if (ctx.subagent || event.subagent || event.agentRole === "subagent") return "subagent";
   if ((ctx.toolCallCount ?? event.toolCallCount ?? 0) > 0 || event.afterToolCall) return "tool_followup";
   if (ctx.manualCommand || event.manualCommand || event.commandName) return "manual_command";
-  if (ctx.inboundMessage || event.messageReceived || event.message || ctx.message) return "user_chat";
+  if (ctx.inboundMessage || event.messageReceived || event.message || ctx.message || hasMessageProvider || hasImChannel) return "user_chat";
   return "unknown";
 }
 
