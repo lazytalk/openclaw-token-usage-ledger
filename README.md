@@ -27,6 +27,15 @@ Default database path when `dbPath` is omitted:
 
 - `~/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite`
 
+To inspect the ledger on a host, set `DB` from config and fall back to that default path if the config omits `dbPath`:
+
+```bash
+DB="$(jq -r '.plugins.entries["token-usage-ledger"].config.dbPath // empty' "$HOME/.openclaw/openclaw.json")"
+if [ -z "$DB" ]; then
+  DB="$HOME/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite"
+fi
+```
+
 Example plugin entry in `openclaw.json`:
 
 ```json
@@ -52,6 +61,8 @@ Example plugin entry in `openclaw.json`:
 
 `allowConversationAccess` is required for non-bundled plugins to receive `llm_output`.
 
+If you reinstall the plugin, OpenClaw may remove the entry from `openclaw.json`. Reapply the config patch above after reinstalling.
+
 ## Install For Local Development
 
 ```bash
@@ -71,6 +82,18 @@ jq '
 
 openclaw gateway restart
 openclaw plugins inspect token-usage-ledger --runtime --json
+```
+
+For repeatable setup on a new host, use the helper script:
+
+```bash
+bash scripts/setup-openclaw.sh
+```
+
+To also pin a specific SQLite path, pass it as the first argument or set `OPENCLAW_DB_PATH`:
+
+```bash
+bash scripts/setup-openclaw.sh /Users/you/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite
 ```
 
 Healthy runtime output should show:
@@ -93,7 +116,7 @@ If `better-sqlite3` cannot use a prebuilt binary on your remote machine, the mac
 
 ```bash
 openclaw-token-usage-report \
-  --db ~/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite \
+  --db "$DB" \
   --since 24h \
   --format markdown
 ```
@@ -108,6 +131,13 @@ Supported options:
 - `--format text | json | markdown`
 - `--top 10`
 - `--include-anomalies`
+
+For a quick sanity check before running the report:
+
+```bash
+sqlite3 "$DB" ".tables"
+sqlite3 "$DB" "select count(*) as rows, max(created_at) as latest from usage_events;"
+```
 
 ## Cron Reporter
 

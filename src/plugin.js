@@ -16,14 +16,15 @@ const defaultConfig = {
   pricing: {}
 };
 
-export function createTokenUsageLedgerPlugin() {
+export function createTokenUsageLedgerPlugin(options = {}) {
+  const createDb = options.createDb ?? createUsageDb;
   return {
     id: "token-usage-ledger",
     name: "Token Usage Ledger",
     description: "Durable SQLite token accounting for OpenClaw model calls.",
     register(api = {}) {
       const config = { ...defaultConfig, ...(api.pluginConfig ?? api.config ?? {}) };
-      const db = createUsageDb(config.dbPath);
+      const db = createDb(config.dbPath);
       const modelCallStarted = new Map();
 
       registerHook(api, "model_call_started", (event = {}, ctx = {}) => {
@@ -220,6 +221,8 @@ function buildCallKey(event = {}, ctx = {}) {
 function deriveRuntimeHints(event = {}, ctx = {}) {
   const sessionKey = ctx.sessionKey ?? event.sessionKey ?? null;
   const runtimeId = ctx.runtimeId ?? event.runtimeId ?? null;
+  const channelId = ctx.channelId ?? event.channelId ?? null;
+  const trigger = ctx.trigger ?? event.trigger ?? null;
   const hints = {
     sessionKey,
     agentId: null,
@@ -241,6 +244,18 @@ function deriveRuntimeHints(event = {}, ctx = {}) {
     } else if (sessionKey.includes("tui-")) {
       hints.platform = "openclaw";
       hints.channelName = "tui";
+      hints.source = "tui";
+    }
+  }
+
+  if (!hints.channelName && typeof channelId === "string" && channelId.trim()) {
+    hints.channelName = channelId;
+  }
+
+  if (!hints.source && typeof trigger === "string" && trigger.trim()) {
+    if (trigger.includes("tui")) {
+      hints.platform = hints.platform ?? "openclaw";
+      hints.channelName = hints.channelName ?? "tui";
       hints.source = "tui";
     }
   }
