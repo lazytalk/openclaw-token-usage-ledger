@@ -120,6 +120,34 @@ For OpenClaw `2026.6.1`, dependency installation depends on the install mode:
 
 If `better-sqlite3` cannot use a prebuilt binary on your remote machine, the machine needs a working native build toolchain for Node modules.
 
+## Updating the Plugin
+
+On the deployed host, run:
+
+```bash
+cd /path/to/openclaw-token-usage-ledger
+git pull
+npm install --omit=dev
+openclaw gateway restart
+```
+
+Whether a gateway restart is required depends on what changed:
+
+| Changed files | Restart needed? |
+|---|---|
+| `src/plugin.js`, `src/identity.js`, `src/classifySource.js`, `src/normalizeChannel.js`, `src/normalizeUsage.js`, `src/cost.js`, `src/db.js` | **Yes** — plugin runtime code runs inside the gateway process |
+| `src/report.js`, `src/reportCore.js` | **No** — report runs as a separate one-shot process |
+
+When in doubt, restart. It is always safe to do so.
+
+After restarting, verify the plugin is loaded correctly:
+
+```bash
+openclaw plugins inspect token-usage-ledger --runtime --json
+```
+
+Healthy output should show `hookCount: 3` and no diagnostics about blocked `llm_output`.
+
 ## Report Command
 
 ```bash
