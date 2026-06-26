@@ -26,9 +26,23 @@ export function parseImChannelPlatform(channelId = "") {
   return m ? m[1].toLowerCase() : null;
 }
 
+// Extract user/peer ID from channelId: "o9cq80@im.wechat" -> "o9cq80"
+export function parseImChannelUserId(channelId = "") {
+  if (typeof channelId !== "string") return null;
+  const m = /^(.+)\@im\.[a-z][a-z0-9_-]*$/i.exec(channelId);
+  return m ? m[1] : null;
+}
+
 // Feishu open IDs: ou_ = open user, oc_ = open chat, og_ = open group
 export function parseFeishuChannelId(channelId = "") {
   if (typeof channelId !== "string") return null;
   if (/^o[ucg]_[0-9a-f]{32}$/.test(channelId)) return "feishu";
+  return null;
+}
+
+// Feishu open user IDs start with ou_ — these are individual user IDs
+export function parseFeishuUserId(channelId = "") {
+  if (typeof channelId !== "string") return null;
+  if (/^ou_[0-9a-f]{32}$/.test(channelId)) return channelId;
   return null;
 }
