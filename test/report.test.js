@@ -213,3 +213,48 @@ test("groups channel aliases under canonical channel name", () => {
   assert.equal(summary.groups.channel[0].key, "wechat");
   assert.equal(summary.groups.channel[0].totalTokens, 160);
 });
+
+test("normalizes historical channel-like call_source values to user_chat in By source", () => {
+  const summary = summarizeRows([
+    {
+      created_at: "2026-06-25T01:00:00Z",
+      call_source: "openclaw-weixin",
+      total_tokens: 100
+    },
+    {
+      created_at: "2026-06-25T02:00:00Z",
+      call_source: "wechat",
+      total_tokens: 50
+    },
+    {
+      created_at: "2026-06-25T03:00:00Z",
+      call_source: "user_chat",
+      total_tokens: 30
+    }
+  ]);
+
+  assert.equal(summary.groups.source.length, 1);
+  assert.equal(summary.groups.source[0].key, "user_chat");
+  assert.equal(summary.groups.source[0].totalTokens, 180);
+});
+
+test("shows tool call count in session model drilldown", () => {
+  const report = formatMarkdownReport(
+    summarizeRows([
+      {
+        created_at: "2026-06-25T01:00:00Z",
+        session_key: "session-a",
+        provider: "openai",
+        model: "gpt-4.1",
+        input_tokens: 100,
+        output_tokens: 50,
+        total_tokens: 150,
+        tool_call_count: 3,
+        status: "success"
+      }
+    ]),
+    { from: "a", to: "b", timezone: "UTC" }
+  );
+
+  assert.match(report, /openai:gpt-4.1.*3 tool calls/);
+});

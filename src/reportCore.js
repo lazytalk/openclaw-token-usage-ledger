@@ -1,4 +1,4 @@
-import { normalizeChannelName } from "./normalizeChannel.js";
+import { normalizeChannelName, normalizeCallSource } from "./normalizeChannel.js";
 
 export function parseSince(value, now = new Date()) {
   if (!value) return null;
@@ -33,7 +33,8 @@ export function summarizeRows(rows) {
     addTotals(totals, row);
     addToGroup(groups.user, userKey(row), row);
     addToGroup(groups.model, `${row.provider ?? "unknown"}:${row.model ?? "unknown"}`, row);
-    addToGroup(groups.source, row.call_source ?? "unknown", row);
+    const normalizedSource = normalizeCallSource(row.call_source) ?? row.call_source;
+    addToGroup(groups.source, normalizedSource ?? "unknown", row);
     const normalizedChannel = normalizeChannelName(row.channel_name) ?? row.channel_name;
     addToGroup(groups.channel, normalizedChannel ?? row.platform ?? "unknown", row);
     addToGroup(groups.hour, hourKey(row.created_at), row);
@@ -137,8 +138,9 @@ function appendSessionGroup(lines, title, rows, top) {
       `${index + 1}. ${row.key} / total ${formatToken(row.totalTokens)} tokens (input ${formatToken(row.inputTokens)} / output ${formatToken(row.outputTokens)} / cache ${formatToken(row.cacheTokens)}) / $${row.estimatedCostUsd.toFixed(6)} / ${formatNumber(row.calls)} calls`
     );
     for (const model of row.models.slice(0, top)) {
+      const toolSuffix = model.toolCallCount > 0 ? ` / ${formatNumber(model.toolCallCount)} tool calls` : "";
       lines.push(
-        `   - ${model.key}: total ${formatToken(model.totalTokens)} (input ${formatToken(model.inputTokens)} / output ${formatToken(model.outputTokens)} / cache ${formatToken(model.cacheTokens)}) / $${model.estimatedCostUsd.toFixed(6)} / ${formatNumber(model.calls)} calls`
+        `   - ${model.key}: total ${formatToken(model.totalTokens)} (input ${formatToken(model.inputTokens)} / output ${formatToken(model.outputTokens)} / cache ${formatToken(model.cacheTokens)}) / $${model.estimatedCostUsd.toFixed(6)} / ${formatNumber(model.calls)} calls${toolSuffix}`
       );
     }
   }
@@ -229,7 +231,8 @@ function addToGroup(map, key, row) {
     inputTokens: 0,
     outputTokens: 0,
     cacheTokens: 0,
-    estimatedCostUsd: 0
+    estimatedCostUsd: 0,
+    toolCallCount: 0
   };
   current.calls += 1;
   current.totalTokens += numeric(row.total_tokens);
@@ -237,6 +240,7 @@ function addToGroup(map, key, row) {
   current.outputTokens += numeric(row.output_tokens);
   current.cacheTokens += numeric(row.cache_read_tokens) + numeric(row.cache_write_tokens);
   current.estimatedCostUsd += numeric(row.estimated_cost_usd);
+  current.toolCallCount += numeric(row.tool_call_count);
   map.set(key, current);
 }
 
