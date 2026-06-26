@@ -133,14 +133,12 @@ export function createTokenUsageLedgerPlugin(options = {}) {
               eventKeys: Object.keys(event ?? {}),
               contextKeys: Object.keys(ctx ?? {})
             });
-            api.logger?.warn?.("token-usage-ledger: llm_output fired but no usage field found", {
-              eventKeys: Object.keys(event ?? {}),
-              contextKeys: Object.keys(ctx ?? {})
-            });
-            return;
           }
 
-          const usage = normalizeUsage(rawUsage);
+          const usage = rawUsage ? normalizeUsage(rawUsage) : {
+            inputTokens: 0, outputTokens: 0, totalTokens: 0,
+            cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0
+          };
           const actor = extractIdentity(event, ctx);
           const runtimeHints = deriveRuntimeHints(event, ctx);
           const callSource = classifyCallSource(event, ctx);
@@ -148,13 +146,13 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           const provider = event.provider ?? ctx.provider ?? null;
           const model = event.model ?? ctx.model ?? null;
           const callMeta = modelCallStarted.get(buildCallKey(event, ctx));
-          const cost = calculateCost({
+          const cost = rawUsage ? calculateCost({
             provider,
             model,
             usage,
             pricing: config.pricing,
             localModelsCostMode: config.localModelsCostMode
-          });
+          }) : { estimatedCostUsd: 0, inputCostUsd: 0, outputCostUsd: 0, cacheCostUsd: 0, costMode: "unknown" };
           const toolNames = event.toolNames ?? ctx.toolNames ?? [];
           const toolCallCount = Number(ctx.toolCallCount ?? event.toolCallCount ?? toolNames.length ?? 0) || 0;
 
@@ -203,14 +201,14 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             had_tool_calls: toolCallCount > 0 ? 1 : 0,
             tool_call_count: toolCallCount,
             tool_names_json: toolNames.length ? JSON.stringify(toolNames) : null,
-            status: event.status ?? (callMeta?.outcome === "error" ? "error" : "success"),
+            status: rawUsage ? (event.status ?? (callMeta?.outcome === "error" ? "error" : "success")) : "no-usage",
             error_code: event.errorCode ?? callMeta?.errorCode ?? null,
             error_message: event.errorMessage ?? null,
             retry_count: event.retryCount ?? 0,
             prompt_hash: null,
             response_hash: null,
             preview: config.storePreview ? String(event.preview ?? "").slice(0, config.previewMaxChars) : null,
-            raw_usage_json: config.debugRawUsage ? JSON.stringify(rawUsage) : null,
+            raw_usage_json: (config.debugRawUsage && rawUsage) ? JSON.stringify(rawUsage) : null,
             metadata_json: JSON.stringify({
               eventKeys: Object.keys(event ?? {}),
               contextKeys: Object.keys(ctx ?? {})
