@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatMarkdownReport, summarizeRows } from "../src/reportCore.js";
+import { formatMarkdownReport, parseSince, summarizeRows } from "../src/reportCore.js";
+
+test("parses minute-based since windows", () => {
+  const now = new Date("2026-06-26T00:10:00.000Z");
+  const from = parseSince("10m", now);
+  assert.equal(from, "2026-06-26T00:00:00.000Z");
+});
 
 test("summarizes totals and groups", () => {
   const summary = summarizeRows([

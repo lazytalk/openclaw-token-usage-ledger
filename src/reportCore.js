@@ -1,9 +1,9 @@
 export function parseSince(value, now = new Date()) {
   if (!value) return null;
-  const match = /^(\d+)([hdw])$/.exec(value);
+  const match = /^(\d+)([mhdw])$/.exec(value);
   if (!match) throw new Error(`Unsupported --since value: ${value}`);
   const amount = Number(match[1]);
-  const unitMs = { h: 3_600_000, d: 86_400_000, w: 604_800_000 }[match[2]];
+  const unitMs = { m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 }[match[2]];
   return new Date(now.getTime() - amount * unitMs).toISOString();
 }
 

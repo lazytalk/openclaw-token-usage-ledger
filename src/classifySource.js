@@ -1,4 +1,8 @@
 export function classifyCallSource(event = {}, ctx = {}) {
+  const sessionKey = ctx.sessionKey ?? event.sessionKey ?? "";
+  const runtimeId = ctx.runtimeId ?? event.runtimeId ?? "";
+  if (typeof sessionKey === "string" && sessionKey.includes(":tui-")) return "tui";
+  if (typeof runtimeId === "string" && runtimeId.startsWith("tui-")) return "tui";
   if (ctx.cronJobId || event.cronJobId || ctx.cron || event.cron) return "cron_job";
   if (ctx.compaction || event.compaction || event.reason === "compaction") return "compaction";
   if (ctx.memoryFlush || event.memoryFlush || event.reason === "memory_flush") return "memory_flush";

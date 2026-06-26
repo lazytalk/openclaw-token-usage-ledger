@@ -19,6 +19,16 @@ Stored fields include:
 
 ## Configuration
 
+The plugin runtime schema currently accepts one plugin config key:
+
+- `dbPath` (optional): absolute path to the SQLite file.
+
+Default database path when `dbPath` is omitted:
+
+- `~/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite`
+
+Example plugin entry in `openclaw.json`:
+
 ```json
 {
   "plugins": {
@@ -26,25 +36,21 @@ Stored fields include:
       "token-usage-ledger": {
         "enabled": true,
         "hooks": {
-          "allowConversationAccess": true,
-          "timeoutMs": 30000
+          "allowConversationAccess": true
         },
         "config": {
-          "dbPath": "~/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite",
-          "storeContent": false,
-          "storePreview": false,
-          "previewMaxChars": 120,
-          "hashContent": true,
-          "reportTimezone": "America/Phoenix",
-          "defaultCurrency": "USD",
-          "localModelsCostMode": "zero",
-          "debugRawUsage": true
+          "dbPath": "/Users/you/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite"
         }
       }
-    }
+    },
+    "allow": [
+      "token-usage-ledger"
+    ]
   }
 }
 ```
+
+`allowConversationAccess` is required for non-bundled plugins to receive `llm_output`.
 
 ## Install For Local Development
 
@@ -52,9 +58,26 @@ Stored fields include:
 npm install
 npm test
 openclaw plugins install --link .
-openclaw plugins enable token-usage-ledger
-openclaw gateway restart
 ```
+
+Then patch OpenClaw config for conversation hook access and allow-list:
+
+```bash
+jq '
+  .plugins.entries["token-usage-ledger"].enabled = true
+  | .plugins.entries["token-usage-ledger"].hooks.allowConversationAccess = true
+  | .plugins.allow = ((.plugins.allow // []) + ["token-usage-ledger"] | unique)
+' "$HOME/.openclaw/openclaw.json" > /tmp/openclaw.json && mv /tmp/openclaw.json "$HOME/.openclaw/openclaw.json"
+
+openclaw gateway restart
+openclaw plugins inspect token-usage-ledger --runtime --json
+```
+
+Healthy runtime output should show:
+
+- `hookCount: 3`
+- `typedHooks`: `llm_output`, `model_call_started`, `model_call_ended`
+- no diagnostics about blocked `llm_output`
 
 The production SQLite writer uses `better-sqlite3`. The local unit tests avoid native dependencies where possible, but a real OpenClaw install should run `npm install` first.
 

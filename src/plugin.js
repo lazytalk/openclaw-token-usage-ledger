@@ -34,6 +34,7 @@ export function createTokenUsageLedgerPlugin() {
       registerHook(api, "model_call_ended", (event = {}, ctx = {}) => {
         const key = buildCallKey(event, ctx);
         const startedAt = modelCallStarted.get(key);
+        const runtimeHints = deriveRuntimeHints(event, ctx);
         const callMeta = {
           startedAt: typeof startedAt === "string" ? startedAt : startedAt?.startedAt,
           endedAt: new Date().toISOString(),
@@ -46,6 +47,7 @@ export function createTokenUsageLedgerPlugin() {
         if (event.outcome === "error") {
           try {
             const actor = extractIdentity(event, ctx);
+            const callSource = classifyCallSource(event, ctx);
             db.insertUsageEvent({
               id: buildEventId(event, ctx),
               created_at: new Date().toISOString(),
@@ -53,24 +55,24 @@ export function createTokenUsageLedgerPlugin() {
               ended_at: callMeta.endedAt,
               duration_ms: callMeta.durationMs,
               gateway_profile: ctx.gatewayProfile ?? event.gatewayProfile ?? process.env.OPENCLAW_PROFILE ?? null,
-              agent_id: ctx.agentId ?? event.agentId ?? null,
-              agent_name: ctx.agentName ?? event.agentName ?? null,
+              agent_id: ctx.agentId ?? event.agentId ?? runtimeHints.agentId ?? null,
+              agent_name: ctx.agentName ?? event.agentName ?? (runtimeHints.agentId ? `agent:${runtimeHints.agentId}` : null),
               runtime_id: ctx.runtimeId ?? event.runtimeId ?? null,
-              platform: actor.platform,
-              channel_name: actor.channelName,
+              platform: actor.platform ?? runtimeHints.platform,
+              channel_name: actor.channelName ?? runtimeHints.channelName,
               platform_user_id: actor.platformUserId,
               platform_user_display_name: actor.platformUserDisplayName,
               platform_tenant_id: actor.platformTenantId,
               platform_conversation_id: actor.platformConversationId,
               platform_message_id: actor.platformMessageId,
               thread_id: actor.threadId,
-              session_key: ctx.sessionKey ?? event.sessionKey ?? null,
+              session_key: runtimeHints.sessionKey,
               session_id: ctx.sessionId ?? event.sessionId ?? null,
               run_id: ctx.runId ?? event.runId ?? null,
               turn_id: ctx.turnId ?? event.turnId ?? null,
               request_id: event.requestIdHash ?? event.requestId ?? event.callId ?? null,
               provider_request_id: event.providerRequestId ?? event.upstreamRequestIdHash ?? null,
-              call_source: classifyCallSource(event, ctx),
+              call_source: callSource === "unknown" ? runtimeHints.source ?? callSource : callSource,
               provider: event.provider ?? ctx.provider ?? null,
               model: event.model ?? ctx.model ?? null,
               input_tokens: 0,
@@ -108,7 +110,9 @@ export function createTokenUsageLedgerPlugin() {
 
           const usage = normalizeUsage(rawUsage);
           const actor = extractIdentity(event, ctx);
+          const runtimeHints = deriveRuntimeHints(event, ctx);
           const callSource = classifyCallSource(event, ctx);
+          const resolvedCallSource = callSource === "unknown" ? runtimeHints.source ?? callSource : callSource;
           const provider = event.provider ?? ctx.provider ?? null;
           const model = event.model ?? ctx.model ?? null;
           const callMeta = modelCallStarted.get(buildCallKey(event, ctx));
@@ -130,24 +134,24 @@ export function createTokenUsageLedgerPlugin() {
             duration_ms: event.durationMs ?? callMeta?.durationMs ?? ctx.durationMs ?? null,
             time_to_first_token_ms: event.timeToFirstTokenMs ?? event.timeToFirstByteMs ?? null,
             gateway_profile: ctx.gatewayProfile ?? event.gatewayProfile ?? process.env.OPENCLAW_PROFILE ?? null,
-            agent_id: ctx.agentId ?? event.agentId ?? null,
-            agent_name: ctx.agentName ?? event.agentName ?? null,
+            agent_id: ctx.agentId ?? event.agentId ?? runtimeHints.agentId ?? null,
+            agent_name: ctx.agentName ?? event.agentName ?? (runtimeHints.agentId ? `agent:${runtimeHints.agentId}` : null),
             runtime_id: ctx.runtimeId ?? event.runtimeId ?? null,
-            platform: actor.platform,
-            channel_name: actor.channelName,
+            platform: actor.platform ?? runtimeHints.platform,
+            channel_name: actor.channelName ?? runtimeHints.channelName,
             platform_user_id: actor.platformUserId,
             platform_user_display_name: actor.platformUserDisplayName,
             platform_tenant_id: actor.platformTenantId,
             platform_conversation_id: actor.platformConversationId,
             platform_message_id: actor.platformMessageId,
             thread_id: actor.threadId,
-            session_key: ctx.sessionKey ?? event.sessionKey ?? null,
+            session_key: runtimeHints.sessionKey,
             session_id: ctx.sessionId ?? event.sessionId ?? null,
             run_id: ctx.runId ?? event.runId ?? null,
             turn_id: ctx.turnId ?? event.turnId ?? null,
             request_id: event.requestIdHash ?? event.requestId ?? event.callId ?? null,
             provider_request_id: event.providerRequestId ?? event.upstreamRequestIdHash ?? callMeta?.upstreamRequestIdHash ?? null,
-            call_source: callSource,
+            call_source: resolvedCallSource,
             provider,
             model,
             input_tokens: usage.inputTokens,
@@ -211,4 +215,41 @@ function buildCallKey(event = {}, ctx = {}) {
     event.provider ?? ctx.provider,
     event.model ?? ctx.model
   ].map((value) => value ?? "").join("|");
+}
+
+function deriveRuntimeHints(event = {}, ctx = {}) {
+  const sessionKey = ctx.sessionKey ?? event.sessionKey ?? null;
+  const runtimeId = ctx.runtimeId ?? event.runtimeId ?? null;
+  const hints = {
+    sessionKey,
+    agentId: null,
+    platform: null,
+    channelName: null,
+    source: null
+  };
+
+  if (typeof sessionKey === "string") {
+    const match = /^agent:([^:]+):(.+)$/.exec(sessionKey);
+    if (match) {
+      hints.agentId = match[1] || null;
+      const tail = match[2] || "";
+      if (tail.startsWith("tui-")) {
+        hints.platform = "openclaw";
+        hints.channelName = "tui";
+        hints.source = "tui";
+      }
+    } else if (sessionKey.includes("tui-")) {
+      hints.platform = "openclaw";
+      hints.channelName = "tui";
+      hints.source = "tui";
+    }
+  }
+
+  if (typeof runtimeId === "string" && runtimeId.startsWith("tui-") && !hints.source) {
+    hints.platform = hints.platform ?? "openclaw";
+    hints.channelName = hints.channelName ?? "tui";
+    hints.source = "tui";
+  }
+
+  return hints;
 }
