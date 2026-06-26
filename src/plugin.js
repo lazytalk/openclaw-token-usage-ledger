@@ -27,7 +27,8 @@ const defaultConfig = {
   defaultCurrency: "USD",
   localModelsCostMode: "zero",
   debugRawUsage: true,
-  pricing: {}
+  pricing: {},
+  userNameMap: {}
 };
 
 export function createTokenUsageLedgerPlugin(options = {}) {
@@ -66,6 +67,8 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             const callSource = classifyCallSource(event, ctx);
             const rawChannelName = actor.channelName ?? runtimeHints.channelName;
             const channelName = normalizeChannelName(rawChannelName) ?? rawChannelName;
+            const resolvedDisplayName = actor.platformUserDisplayName
+              ?? (actor.platformUserId ? (config.userNameMap[actor.platformUserId] ?? null) : null);
             db.insertUsageEvent({
               id: buildEventId(event, ctx),
               created_at: new Date().toISOString(),
@@ -79,7 +82,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
               platform: actor.platform ?? runtimeHints.platform,
               channel_name: channelName,
               platform_user_id: actor.platformUserId,
-              platform_user_display_name: actor.platformUserDisplayName,
+              platform_user_display_name: resolvedDisplayName,
               platform_tenant_id: actor.platformTenantId,
               platform_conversation_id: actor.platformConversationId,
               platform_message_id: actor.platformMessageId,
@@ -148,6 +151,8 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           const rawChannelName = actor.channelName ?? runtimeHints.channelName;
           const channelName = normalizeChannelName(rawChannelName) ?? rawChannelName;
           const resolvedCallSource = callSource === "unknown" ? runtimeHints.source ?? callSource : callSource;
+          const resolvedDisplayName = actor.platformUserDisplayName
+            ?? (actor.platformUserId ? (config.userNameMap[actor.platformUserId] ?? null) : null);
           const provider = event.provider ?? ctx.provider ?? null;
           const model = event.model ?? ctx.model ?? null;
           const callMeta = modelCallStarted.get(buildCallKey(event, ctx));
@@ -175,7 +180,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             platform: actor.platform ?? runtimeHints.platform,
             channel_name: channelName,
             platform_user_id: actor.platformUserId,
-            platform_user_display_name: actor.platformUserDisplayName,
+            platform_user_display_name: resolvedDisplayName,
             platform_tenant_id: actor.platformTenantId,
             platform_conversation_id: actor.platformConversationId,
             platform_message_id: actor.platformMessageId,

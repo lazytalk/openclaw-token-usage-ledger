@@ -77,8 +77,7 @@ test("records a TUI model call with agent and source metadata", async () => {
   assert.equal(row.raw_usage_json, JSON.stringify({ input: 41, output: 2, total: 43 }));
 });
 
-test("canonicalizes channel aliases like openclaw-weixin to wechat", async () => {
-  const handlers = {};
+test("canonicalizes channel aliases like openclaw-weixin to wechat", async () => {  const handlers = {};
   const recordedRows = [];
   const plugin = createTokenUsageLedgerPlugin({
     createDb() {
@@ -120,4 +119,41 @@ test("canonicalizes channel aliases like openclaw-weixin to wechat", async () =>
   const metadata = JSON.parse(row.metadata_json);
   assert.equal(metadata.rawChannelName, "openclaw-weixin");
   assert.equal(metadata.normalizedChannelName, "wechat");
+});
+
+test("resolves display name from userNameMap when event has no name fields", async () => {
+  const handlers = {};
+  const recordedRows = [];
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent(row) { recordedRows.push(row); }
+      };
+    }
+  });
+
+  plugin.register({
+    pluginConfig: {
+      dbPath: ":memory:",
+      userNameMap: {
+        "o9cq80x7h0yhlL0XY7Ivw0Fa3hdU": "Henry Wang"
+      }
+    },
+    registerHook(name, handler) { handlers[name] = handler; },
+    logger: { warn() {} }
+  });
+
+  await handlers.llm_output(
+    { usage: { input: 5, output: 2, total: 7 } },
+    {
+      channelId: "o9cq80x7h0yhlL0XY7Ivw0Fa3hdU@im.wechat",
+      provider: "openai",
+      model: "gpt-4.1"
+    }
+  );
+
+  assert.equal(recordedRows.length, 1);
+  assert.equal(recordedRows[0].platform_user_id, "o9cq80x7h0yhlL0XY7Ivw0Fa3hdU");
+  assert.equal(recordedRows[0].platform_user_display_name, "Henry Wang");
 });
