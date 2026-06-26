@@ -1,14 +1,20 @@
-import { appendFileSync } from "fs";
-import { buildEventId, createUsageDb } from "./db.js";
+import { appendFileSync, mkdirSync } from "fs";
+import { homedir } from "os";
+import { resolve, dirname } from "path";
+import { buildEventId, createUsageDb, defaultDbPath } from "./db.js";
 import { normalizeUsage } from "./normalizeUsage.js";
 import { extractIdentity } from "./identity.js";
 import { classifyCallSource } from "./classifySource.js";
 import { calculateCost } from "./cost.js";
 
-const DEBUG_LOG = process.env.LEDGER_DEBUG_LOG ?? null;
+// Always write debug log to the plugin data dir; override with LEDGER_DEBUG_LOG env var.
+const _defaultDebugLog = resolve(homedir(), ".openclaw-ops", "plugins", "token-usage-ledger", "debug.jsonl");
+const DEBUG_LOG = process.env.LEDGER_DEBUG_LOG ?? _defaultDebugLog;
 function debugLog(obj) {
-  if (!DEBUG_LOG) return;
-  try { appendFileSync(DEBUG_LOG, JSON.stringify({ ts: new Date().toISOString(), ...obj }) + "\n"); } catch {}
+  try {
+    mkdirSync(dirname(DEBUG_LOG), { recursive: true });
+    appendFileSync(DEBUG_LOG, JSON.stringify({ ts: new Date().toISOString(), ...obj }) + "\n");
+  } catch {}
 }
 
 const defaultConfig = {
