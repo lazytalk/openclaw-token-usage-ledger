@@ -1,8 +1,15 @@
+import { appendFileSync } from "fs";
 import { buildEventId, createUsageDb } from "./db.js";
 import { normalizeUsage } from "./normalizeUsage.js";
 import { extractIdentity } from "./identity.js";
 import { classifyCallSource } from "./classifySource.js";
 import { calculateCost } from "./cost.js";
+
+const DEBUG_LOG = process.env.LEDGER_DEBUG_LOG ?? null;
+function debugLog(obj) {
+  if (!DEBUG_LOG) return;
+  try { appendFileSync(DEBUG_LOG, JSON.stringify({ ts: new Date().toISOString(), ...obj }) + "\n"); } catch {}
+}
 
 const defaultConfig = {
   storeContent: false,
@@ -26,6 +33,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       const config = { ...defaultConfig, ...(api.pluginConfig ?? api.config ?? {}) };
       const db = createDb(config.dbPath);
       const modelCallStarted = new Map();
+      debugLog({ event: "register", dbPath: config.dbPath });
 
       registerHook(api, "model_call_started", (event = {}, ctx = {}) => {
         const key = buildCallKey(event, ctx);
@@ -107,6 +115,13 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       registerHook(api, "llm_output", async (event = {}, ctx = {}) => {
         try {
           const rawUsage = event.usage ?? event.rawUsage ?? event.response?.usage;
+          debugLog({
+            event: "llm_output",
+            hasUsage: !!rawUsage,
+            rawUsage: rawUsage ?? null,
+            eventKeys: Object.keys(event ?? {}),
+            contextKeys: Object.keys(ctx ?? {})
+          });
           if (!rawUsage) {
             api.logger?.warn?.("token-usage-ledger: llm_output fired but no usage field found", {
               eventKeys: Object.keys(event ?? {}),
