@@ -121,14 +121,12 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       registerHook(api, "llm_output", async (event = {}, ctx = {}) => {
         try {
           const rawUsage = event.usage ?? event.rawUsage ?? event.response?.usage;
-          debugLog({
-            event: "llm_output",
-            hasUsage: !!rawUsage,
-            rawUsage: rawUsage ?? null,
-            eventKeys: Object.keys(event ?? {}),
-            contextKeys: Object.keys(ctx ?? {})
-          });
           if (!rawUsage) {
+            debugLog({
+              event: "llm_output_no_usage",
+              eventKeys: Object.keys(event ?? {}),
+              contextKeys: Object.keys(ctx ?? {})
+            });
             api.logger?.warn?.("token-usage-ledger: llm_output fired but no usage field found", {
               eventKeys: Object.keys(event ?? {}),
               contextKeys: Object.keys(ctx ?? {})
