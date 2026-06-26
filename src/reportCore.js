@@ -13,6 +13,7 @@ export function summarizeRows(rows) {
   const totals = emptyTotals();
   const groups = {
     user: new Map(),
+    agent: new Map(),
     model: new Map(),
     source: new Map(),
     channel: new Map(),
@@ -32,6 +33,7 @@ export function summarizeRows(rows) {
   for (const row of rows) {
     addTotals(totals, row);
     addToGroup(groups.user, userKey(row), row);
+    addToGroup(groups.agent, agentKey(row), row);
     addToGroup(groups.model, `${row.provider ?? "unknown"}:${row.model ?? "unknown"}`, row);
     const normalizedSource = normalizeCallSource(row.call_source) ?? row.call_source;
     addToGroup(groups.source, normalizedSource ?? "unknown", row);
@@ -66,6 +68,7 @@ export function summarizeRows(rows) {
     totals,
     groups: {
       user: sortedGroup(groups.user),
+      agent: sortedGroup(groups.agent),
       model: sortedGroup(groups.model),
       source: sortedGroup(groups.source),
       channel: sortedGroup(groups.channel),
@@ -97,6 +100,7 @@ export function formatTextReport(summary, { from, to, timezone = "UTC", top = 10
   ];
 
   appendGroup(lines, "By user", summary.groups.user, top);
+  appendGroup(lines, "By agent", summary.groups.agent, top);
   appendGroup(lines, "By model", summary.groups.model, top);
   appendGroup(lines, "By source", summary.groups.source, top);
   appendGroup(lines, "By channel", summary.groups.channel, top);
@@ -287,6 +291,10 @@ function userKey(row) {
     row.platform_user_id,
     row.platform
   ].filter(Boolean).join(" / ") || "unknown";
+}
+
+function agentKey(row) {
+  return row.agent_name ?? row.agent_id ?? "unknown";
 }
 
 function hourKey(value) {

@@ -191,6 +191,21 @@ test("renders per-call breakdown when call rows are provided", () => {
   assert.match(report, /2\. 2026-06-25T01:01:00Z \/ openai:gpt-4.1 \/ total 320 \(input 200 \/ output 100 \/ cache 20\).*tools: 1 call\(s\)/);
 });
 
+test("groups calls by agent name or agent id", () => {
+  const summary = summarizeRows([
+    { created_at: "2026-06-25T01:00:00Z", agent_name: "PlannerAgent", total_tokens: 200 },
+    { created_at: "2026-06-25T02:00:00Z", agent_name: "PlannerAgent", total_tokens: 100 },
+    { created_at: "2026-06-25T03:00:00Z", agent_id: "agent-xyz", total_tokens: 50 },
+    { created_at: "2026-06-25T04:00:00Z", total_tokens: 20 }
+  ]);
+
+  const agentMap = Object.fromEntries(summary.groups.agent.map(g => [g.key, g]));
+  assert.equal(agentMap["PlannerAgent"].calls, 2);
+  assert.equal(agentMap["PlannerAgent"].totalTokens, 300);
+  assert.equal(agentMap["agent-xyz"].calls, 1);
+  assert.equal(agentMap["unknown"].calls, 1);
+});
+
 test("groups channel aliases under canonical channel name", () => {
   const summary = summarizeRows([
     {
