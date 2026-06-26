@@ -72,7 +72,7 @@ export function summarizeRows(rows) {
   };
 }
 
-export function formatTextReport(summary, { from, to, timezone = "UTC", top = 10 } = {}) {
+export function formatTextReport(summary, { from, to, timezone = "UTC", top = 10, callRows = [] } = {}) {
   const lines = [
     "Daily Token Usage Report",
     `Period: ${from ?? "beginning"} to ${to ?? "now"} ${timezone}`,
@@ -97,6 +97,7 @@ export function formatTextReport(summary, { from, to, timezone = "UTC", top = 10
   appendGroup(lines, "By source", summary.groups.source, top);
   appendGroup(lines, "By channel", summary.groups.channel, top);
   appendSessionGroup(lines, "By session", summary.groups.session, top);
+  appendCallBreakdown(lines, "Session calls", callRows);
   appendAnomalies(lines, summary.anomalies);
   return lines.join("\n");
 }
@@ -139,6 +140,19 @@ function appendSessionGroup(lines, title, rows, top) {
     }
   }
   if (!rows.length) lines.push("- none");
+  lines.push("");
+}
+
+function appendCallBreakdown(lines, title, rows) {
+  if (!rows.length) return;
+  lines.push(title);
+  for (const [index, row] of rows.entries()) {
+    const modelKey = `${row.provider ?? "unknown"}:${row.model ?? "unknown"}`;
+    const cacheTokens = numeric(row.cache_read_tokens) + numeric(row.cache_write_tokens);
+    lines.push(
+      `${index + 1}. ${row.created_at ?? "unknown"} / ${modelKey} / total ${formatToken(row.total_tokens)} (input ${formatToken(row.input_tokens)} / output ${formatToken(row.output_tokens)} / cache ${formatToken(cacheTokens)}) / $${numeric(row.estimated_cost_usd).toFixed(6)} / ${row.status ?? "unknown"}`
+    );
+  }
   lines.push("");
 }
 

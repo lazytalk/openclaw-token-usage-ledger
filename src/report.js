@@ -68,14 +68,35 @@ export function runReport(argv = process.argv.slice(2)) {
   const rows = db.query(`SELECT * FROM usage_events ${where} ORDER BY created_at ASC`, params);
   db.close();
   const summary = summarizeRows(rows);
+  const callRows = args.session ? rows : [];
 
   if (args.format === "json") {
-    return JSON.stringify({ period: { from: args.from, to: args.to, timezone: args.timezone }, ...summary }, null, 2);
+    return JSON.stringify({
+      period: { from: args.from, to: args.to, timezone: args.timezone },
+      ...summary,
+      ...(args.session ? { calls: callRows.map(toCallSummary) } : {})
+    }, null, 2);
   }
   if (args.format === "markdown") {
-    return formatMarkdownReport(summary, args);
+    return formatMarkdownReport(summary, { ...args, callRows });
   }
-  return formatTextReport(summary, args);
+  return formatTextReport(summary, { ...args, callRows });
+}
+
+function toCallSummary(row) {
+  return {
+    id: row.id ?? null,
+    createdAt: row.created_at ?? null,
+    provider: row.provider ?? "unknown",
+    model: row.model ?? "unknown",
+    inputTokens: Number(row.input_tokens) || 0,
+    outputTokens: Number(row.output_tokens) || 0,
+    cacheReadTokens: Number(row.cache_read_tokens) || 0,
+    cacheWriteTokens: Number(row.cache_write_tokens) || 0,
+    totalTokens: Number(row.total_tokens) || 0,
+    estimatedCostUsd: Number(row.estimated_cost_usd) || 0,
+    status: row.status ?? null
+  };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

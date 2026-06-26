@@ -149,3 +149,41 @@ test("renders by session section with model drilldown", () => {
   assert.match(report, /- anthropic:claude-sonnet: total 340 \(input 200 \/ output 100 \/ cache 40\)/);
   assert.match(report, /- openai:gpt-4.1: total 160 \(input 100 \/ output 50 \/ cache 10\)/);
 });
+
+test("renders per-call breakdown when call rows are provided", () => {
+  const rows = [
+    {
+      created_at: "2026-06-25T01:00:00Z",
+      provider: "openai",
+      model: "gpt-4.1",
+      input_tokens: 100,
+      output_tokens: 50,
+      cache_read_tokens: 10,
+      cache_write_tokens: 0,
+      total_tokens: 160,
+      estimated_cost_usd: 0.001,
+      status: "success"
+    },
+    {
+      created_at: "2026-06-25T01:01:00Z",
+      provider: "openai",
+      model: "gpt-4.1",
+      input_tokens: 200,
+      output_tokens: 100,
+      cache_read_tokens: 20,
+      cache_write_tokens: 0,
+      total_tokens: 320,
+      estimated_cost_usd: 0.002,
+      status: "success"
+    }
+  ];
+
+  const report = formatMarkdownReport(
+    summarizeRows(rows),
+    { from: "a", to: "b", timezone: "UTC", callRows: rows }
+  );
+
+  assert.match(report, /Session calls/);
+  assert.match(report, /1\. 2026-06-25T01:00:00Z \/ openai:gpt-4.1 \/ total 160 \(input 100 \/ output 50 \/ cache 10\)/);
+  assert.match(report, /2\. 2026-06-25T01:01:00Z \/ openai:gpt-4.1 \/ total 320 \(input 200 \/ output 100 \/ cache 20\)/);
+});

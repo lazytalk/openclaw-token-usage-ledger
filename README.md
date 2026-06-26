@@ -141,6 +141,8 @@ Supported options:
 - `--top 10`
 - `--include-anomalies`
 
+When `--session` is provided, text/markdown output includes a `Session calls` section listing each call in that session with timestamp, model, and token breakdown.
+
 For a quick sanity check before running the report:
 
 ```bash
