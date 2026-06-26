@@ -4,7 +4,7 @@ import { resolve, dirname } from "path";
 import { buildEventId, createUsageDb, defaultDbPath } from "./db.js";
 import { normalizeUsage } from "./normalizeUsage.js";
 import { extractIdentity } from "./identity.js";
-import { classifyCallSource, parseImChannelPlatform } from "./classifySource.js";
+import { classifyCallSource, parseImChannelPlatform, parseFeishuChannelId } from "./classifySource.js";
 import { calculateCost } from "./cost.js";
 
 // Always write debug log to the plugin data dir; override with LEDGER_DEBUG_LOG env var.
@@ -253,6 +253,7 @@ function deriveRuntimeHints(event = {}, ctx = {}) {
   const runtimeId = ctx.runtimeId ?? event.runtimeId ?? null;
   const channelId = ctx.channelId ?? event.channelId ?? null;
   const trigger = ctx.trigger ?? event.trigger ?? null;
+  const messageProvider = ctx.messageProvider ?? event.messageProvider ?? null;
   const hints = {
     sessionKey,
     agentId: null,
@@ -278,12 +279,20 @@ function deriveRuntimeHints(event = {}, ctx = {}) {
     }
   }
 
+  if (!hints.channelName && typeof messageProvider === "string" && messageProvider.trim()) {
+    hints.platform = hints.platform ?? "openclaw";
+    hints.channelName = messageProvider.trim().toLowerCase();
+    hints.source = hints.source ?? hints.channelName;
+  }
+
   if (!hints.channelName && typeof channelId === "string" && channelId.trim()) {
     const imPlatform = parseImChannelPlatform(channelId);
-    if (imPlatform) {
+    const feishuPlatform = parseFeishuChannelId(channelId);
+    const platform = imPlatform ?? feishuPlatform;
+    if (platform) {
       hints.platform = hints.platform ?? "openclaw";
-      hints.channelName = imPlatform;
-      hints.source = hints.source ?? imPlatform;
+      hints.channelName = platform;
+      hints.source = hints.source ?? platform;
     } else {
       hints.channelName = channelId;
     }

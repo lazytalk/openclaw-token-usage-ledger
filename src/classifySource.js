@@ -2,10 +2,14 @@ export function classifyCallSource(event = {}, ctx = {}) {
   const sessionKey = ctx.sessionKey ?? event.sessionKey ?? "";
   const runtimeId = ctx.runtimeId ?? event.runtimeId ?? "";
   const channelId = ctx.channelId ?? event.channelId ?? "";
+  const messageProvider = ctx.messageProvider ?? event.messageProvider ?? "";
   if (typeof sessionKey === "string" && sessionKey.includes(":tui-")) return "tui";
   if (typeof runtimeId === "string" && runtimeId.startsWith("tui-")) return "tui";
+  if (typeof messageProvider === "string" && messageProvider.trim()) return messageProvider.trim().toLowerCase();
   const imPlatform = parseImChannelPlatform(channelId);
   if (imPlatform) return imPlatform;
+  const feishuPlatform = parseFeishuChannelId(channelId);
+  if (feishuPlatform) return feishuPlatform;
   if (ctx.cronJobId || event.cronJobId || ctx.cron || event.cron) return "cron_job";
   if (ctx.compaction || event.compaction || event.reason === "compaction") return "compaction";
   if (ctx.memoryFlush || event.memoryFlush || event.reason === "memory_flush") return "memory_flush";
@@ -22,4 +26,11 @@ export function parseImChannelPlatform(channelId = "") {
   if (typeof channelId !== "string") return null;
   const m = /\@im\.([a-z][a-z0-9_-]*)$/i.exec(channelId);
   return m ? m[1].toLowerCase() : null;
+}
+
+// Feishu open IDs: ou_ = open user, oc_ = open chat, og_ = open group
+export function parseFeishuChannelId(channelId = "") {
+  if (typeof channelId !== "string") return null;
+  if (/^o[ucg]_[0-9a-f]{32}$/.test(channelId)) return "feishu";
+  return null;
 }
