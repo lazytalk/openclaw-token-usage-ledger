@@ -96,6 +96,14 @@ To also pin a specific SQLite path, pass it as the first argument or set `OPENCL
 bash scripts/setup-openclaw.sh /Users/you/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite
 ```
 
+To start a clean smoke test from an empty ledger, back up and clear the current SQLite files first:
+
+```bash
+bash scripts/reset-ledger.sh
+```
+
+That moves the current database, WAL, and SHM files into a timestamped backup folder and leaves the ledger ready for a fresh TUI call.
+
 Healthy runtime output should show:
 
 - `hookCount: 3`
@@ -138,6 +146,25 @@ For a quick sanity check before running the report:
 sqlite3 "$DB" ".tables"
 sqlite3 "$DB" "select count(*) as rows, max(created_at) as latest from usage_events;"
 ```
+
+Fresh smoke test flow:
+
+1. Run `bash scripts/reset-ledger.sh` on the OpenClaw host.
+2. Make one new TUI model call.
+3. Check the newest row:
+
+```bash
+sqlite3 "$DB" "select count(*) as rows, max(created_at) as latest from usage_events;"
+sqlite3 "$DB" "select created_at, agent_id, agent_name, platform, channel_name, call_source, session_key, metadata_json from usage_events order by created_at desc limit 1;"
+```
+
+Expected for a successful TUI attribution test:
+
+- `rows` increases from `0` to `1`
+- `latest` changes to the new call time
+- `platform` is `openclaw`
+- `channel_name` is `tui`
+- `call_source` is `tui`
 
 ## Cron Reporter
 
