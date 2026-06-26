@@ -46,3 +46,31 @@ test("renders markdown report", () => {
   assert.match(report, /^# Daily Token Usage Report/);
   assert.match(report, /Total tokens: 0/);
 });
+
+test("renders highest output tokens using output_tokens", () => {
+  const report = formatMarkdownReport(
+    summarizeRows([
+      {
+        created_at: "2026-06-25T01:00:00Z",
+        provider: "p1",
+        model: "m1",
+        input_tokens: 90,
+        output_tokens: 10,
+        total_tokens: 100,
+        status: "success"
+      },
+      {
+        created_at: "2026-06-25T02:00:00Z",
+        provider: "p2",
+        model: "m2",
+        input_tokens: 100,
+        output_tokens: 8,
+        total_tokens: 108,
+        status: "success"
+      }
+    ]),
+    { from: "a", to: "b", timezone: "UTC" }
+  );
+
+  assert.match(report, /Highest output tokens: p1:m1 10/);
+});

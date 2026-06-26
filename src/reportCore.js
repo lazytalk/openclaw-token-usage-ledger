@@ -107,7 +107,7 @@ function appendAnomalies(lines, anomalies) {
   lines.push("Anomalies");
   lines.push(`- Highest single call: ${describeCall(anomalies.highestSingleCall)}`);
   lines.push(`- Most expensive call: ${describeCall(anomalies.mostExpensiveCall)}`);
-  lines.push(`- Highest output tokens: ${describeCall(anomalies.highestOutputTokens)}`);
+  lines.push(`- Highest output tokens: ${describeCall(anomalies.highestOutputTokens, "output_tokens")}`);
   lines.push(`- Slowest successful call: ${describeCall(anomalies.slowestSuccessfulCall, "duration_ms")}`);
   lines.push(`- Most active session: ${anomalies.mostActiveSession ? `${anomalies.mostActiveSession.sessionKey} (${anomalies.mostActiveSession.calls} calls)` : "none"}`);
   lines.push(`- Failed calls: ${anomalies.failedCalls.length}`);

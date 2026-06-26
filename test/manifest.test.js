@@ -20,6 +20,11 @@ test("openclaw.plugin.json declares required native manifest fields", () => {
   assert.deepEqual(manifest.configSchema, {
     type: "object",
     additionalProperties: false,
-    properties: {}
+    properties: {
+      dbPath: {
+        type: "string",
+        description: "Absolute path to the SQLite database file. Defaults to a file inside the plugin's data directory."
+      }
+    }
   });
 });
