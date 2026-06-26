@@ -213,6 +213,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             })
           });
         } catch (error) {
+          debugLog({ event: "llm_output_error", message: error?.message, stack: error?.stack, code: error?.code });
           api.logger?.warn?.("token-usage-ledger failed to record usage", error);
         }
       });
