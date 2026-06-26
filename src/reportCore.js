@@ -69,16 +69,17 @@ export function formatTextReport(summary, { from, to, timezone = "UTC", top = 10
     `Period: ${from ?? "beginning"} to ${to ?? "now"} ${timezone}`,
     "",
     "Total",
-    `- Total tokens: ${summary.totals.totalTokens}`,
-    `- Input tokens: ${summary.totals.inputTokens}`,
-    `- Output tokens: ${summary.totals.outputTokens}`,
-    `- Cache read tokens: ${summary.totals.cacheReadTokens}`,
-    `- Cache write tokens: ${summary.totals.cacheWriteTokens}`,
-    `- Reasoning tokens: ${summary.totals.reasoningTokens}`,
+    `- Total tokens: ${formatToken(summary.totals.totalTokens)}`,
+    `- Input tokens: ${formatToken(summary.totals.inputTokens)}`,
+    `- Output tokens: ${formatToken(summary.totals.outputTokens)}`,
+    `- Cache tokens (read+write): ${formatToken(summary.totals.cacheReadTokens + summary.totals.cacheWriteTokens)}`,
+    `- Cache read tokens: ${formatToken(summary.totals.cacheReadTokens)}`,
+    `- Cache write tokens: ${formatToken(summary.totals.cacheWriteTokens)}`,
+    `- Reasoning tokens: ${formatToken(summary.totals.reasoningTokens)}`,
     `- Estimated cost: $${summary.totals.estimatedCostUsd.toFixed(6)}`,
-    `- Model calls: ${summary.totals.calls}`,
-    `- Failed calls: ${summary.totals.failedCalls}`,
-    `- Average latency: ${Math.round(summary.totals.averageLatencyMs)} ms`,
+    `- Model calls: ${formatNumber(summary.totals.calls)}`,
+    `- Failed calls: ${formatNumber(summary.totals.failedCalls)}`,
+    `- Average latency: ${formatNumber(Math.round(summary.totals.averageLatencyMs))} ms`,
     ""
   ];
 
@@ -97,7 +98,9 @@ export function formatMarkdownReport(summary, options = {}) {
 function appendGroup(lines, title, rows, top) {
   lines.push(title);
   for (const [index, row] of rows.slice(0, top).entries()) {
-    lines.push(`${index + 1}. ${row.key} / ${row.totalTokens} tokens / $${row.estimatedCostUsd.toFixed(6)} / ${row.calls} calls`);
+    lines.push(
+      `${index + 1}. ${row.key} / total ${formatToken(row.totalTokens)} tokens (input ${formatToken(row.inputTokens)} / output ${formatToken(row.outputTokens)} / cache ${formatToken(row.cacheTokens)}) / $${row.estimatedCostUsd.toFixed(6)} / ${formatNumber(row.calls)} calls`
+    );
   }
   if (!rows.length) lines.push("- none");
   lines.push("");
@@ -115,7 +118,7 @@ function appendAnomalies(lines, anomalies) {
 
 function describeCall(row, metric = "total_tokens") {
   if (!row) return "none";
-  return `${row.provider ?? "unknown"}:${row.model ?? "unknown"} ${numeric(row[metric])}`;
+  return `${row.provider ?? "unknown"}:${row.model ?? "unknown"} ${formatMetric(metric, numeric(row[metric]))}`;
 }
 
 function emptyTotals() {
@@ -191,4 +194,17 @@ function hourKey(value) {
 function numeric(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+}
+
+function formatToken(value) {
+  return formatNumber(Math.round(numeric(value)));
+}
+
+function formatMetric(metric, value) {
+  if (metric === "duration_ms") return `${formatNumber(Math.round(value))} ms`;
+  return formatToken(value);
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat("en-US").format(value);
 }

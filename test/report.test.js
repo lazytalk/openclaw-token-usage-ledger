@@ -51,6 +51,9 @@ test("renders markdown report", () => {
   const report = formatMarkdownReport(summarizeRows([]), { from: "a", to: "b", timezone: "UTC" });
   assert.match(report, /^# Daily Token Usage Report/);
   assert.match(report, /Total tokens: 0/);
+  assert.match(report, /Input tokens: 0/);
+  assert.match(report, /Output tokens: 0/);
+  assert.match(report, /Cache tokens \(read\+write\): 0/);
 });
 
 test("renders highest output tokens using output_tokens", () => {
@@ -79,4 +82,31 @@ test("renders highest output tokens using output_tokens", () => {
   );
 
   assert.match(report, /Highest output tokens: p1:m1 10/);
+});
+
+test("formats token values with commas and shows group token categories", () => {
+  const report = formatMarkdownReport(
+    summarizeRows([
+      {
+        created_at: "2026-06-25T01:00:00Z",
+        provider: "openai",
+        model: "gpt-4.1",
+        platform: "openclaw",
+        call_source: "user_chat",
+        input_tokens: 750000,
+        output_tokens: 250000,
+        cache_read_tokens: 100000,
+        cache_write_tokens: 0,
+        total_tokens: 1100000,
+        status: "success"
+      }
+    ]),
+    { from: "a", to: "b", timezone: "UTC" }
+  );
+
+  assert.match(report, /Total tokens: 1,100,000/);
+  assert.match(report, /Input tokens: 750,000/);
+  assert.match(report, /Output tokens: 250,000/);
+  assert.match(report, /Cache tokens \(read\+write\): 100,000/);
+  assert.match(report, /total 1,100,000 tokens \(input 750,000 \/ output 250,000 \/ cache 100,000\)/);
 });
