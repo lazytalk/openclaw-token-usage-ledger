@@ -253,7 +253,7 @@ test("normalizes historical channel-like call_source values to user_chat in By s
   assert.equal(summary.groups.source[0].totalTokens, 180);
 });
 
-test("shows tool call count in session model drilldown", () => {
+test("shows tool names and count in session model drilldown", () => {
   const report = formatMarkdownReport(
     summarizeRows([
       {
@@ -265,11 +265,42 @@ test("shows tool call count in session model drilldown", () => {
         output_tokens: 50,
         total_tokens: 150,
         tool_call_count: 3,
+        tool_names_json: JSON.stringify(["search_web", "read_file"]),
+        status: "success"
+      },
+      {
+        created_at: "2026-06-25T01:01:00Z",
+        session_key: "session-a",
+        provider: "openai",
+        model: "gpt-4.1",
+        input_tokens: 80,
+        output_tokens: 40,
+        total_tokens: 120,
+        tool_call_count: 2,
+        tool_names_json: JSON.stringify(["read_file", "write_file"]),
         status: "success"
       }
     ]),
     { from: "a", to: "b", timezone: "UTC" }
   );
 
-  assert.match(report, /openai:gpt-4.1.*3 tool calls/);
+  // Tool names deduplicated across calls, count is the sum
+  assert.match(report, /tools: search_web, read_file, write_file \(5 calls\)/);
+});
+
+test("omits tools line in session model drilldown when no tool calls", () => {
+  const report = formatMarkdownReport(
+    summarizeRows([
+      {
+        created_at: "2026-06-25T01:00:00Z",
+        session_key: "session-a",
+        provider: "openai",
+        model: "gpt-4.1",
+        total_tokens: 100
+      }
+    ]),
+    { from: "a", to: "b", timezone: "UTC" }
+  );
+
+  assert.doesNotMatch(report, /tools:/);
 });

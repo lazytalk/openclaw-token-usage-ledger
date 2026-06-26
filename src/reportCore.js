@@ -142,9 +142,9 @@ function appendSessionGroup(lines, title, rows, top) {
       `${index + 1}. ${row.key} / total ${formatToken(row.totalTokens)} tokens (input ${formatToken(row.inputTokens)} / output ${formatToken(row.outputTokens)} / cache ${formatToken(row.cacheTokens)}) / $${row.estimatedCostUsd.toFixed(6)} / ${formatNumber(row.calls)} calls`
     );
     for (const model of row.models.slice(0, top)) {
-      const toolSuffix = model.toolCallCount > 0 ? ` / ${formatNumber(model.toolCallCount)} tool calls` : "";
+      const toolSuffix = describeGroupTools(model);
       lines.push(
-        `   - ${model.key}: total ${formatToken(model.totalTokens)} (input ${formatToken(model.inputTokens)} / output ${formatToken(model.outputTokens)} / cache ${formatToken(model.cacheTokens)}) / $${model.estimatedCostUsd.toFixed(6)} / ${formatNumber(model.calls)} calls${toolSuffix}`
+        `   - ${model.key}: total ${formatToken(model.totalTokens)} (input ${formatToken(model.inputTokens)} / output ${formatToken(model.outputTokens)} / cache ${formatToken(model.cacheTokens)}) / $${model.estimatedCostUsd.toFixed(6)} / ${formatNumber(model.calls)} calls${toolSuffix ? ` / tools: ${toolSuffix}` : ""}`
       );
     }
   }
@@ -172,6 +172,14 @@ function describeTools(row) {
   const count = numeric(row.tool_call_count);
   if (count > 0) return `${formatNumber(count)} call(s)`;
   return "none";
+}
+
+// Summarise tool usage for an aggregated group entry (has .toolNames Set and .toolCallCount)
+function describeGroupTools(group) {
+  if (!group.toolCallCount) return null;
+  const names = group.toolNames instanceof Set ? [...group.toolNames].filter(Boolean) : [];
+  if (names.length) return `${names.join(", ")} (${formatNumber(group.toolCallCount)} calls)`;
+  return `${formatNumber(group.toolCallCount)} calls`;
 }
 
 function parseToolNames(value) {
@@ -236,7 +244,8 @@ function addToGroup(map, key, row) {
     outputTokens: 0,
     cacheTokens: 0,
     estimatedCostUsd: 0,
-    toolCallCount: 0
+    toolCallCount: 0,
+    toolNames: new Set()
   };
   current.calls += 1;
   current.totalTokens += numeric(row.total_tokens);
@@ -245,6 +254,7 @@ function addToGroup(map, key, row) {
   current.cacheTokens += numeric(row.cache_read_tokens) + numeric(row.cache_write_tokens);
   current.estimatedCostUsd += numeric(row.estimated_cost_usd);
   current.toolCallCount += numeric(row.tool_call_count);
+  for (const name of parseToolNames(row.tool_names_json)) current.toolNames.add(name);
   map.set(key, current);
 }
 
