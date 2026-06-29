@@ -37,6 +37,7 @@ export function createUsageDb(path) {
       return 0;
     });
     db.exec(createSchemaSql);
+    ensureSchemaMigrations(db);
     insertStatement = db.prepare(buildUsageUpsertSql());
     return db;
   }
@@ -75,6 +76,16 @@ export function createUsageDb(path) {
       insertStatement = null;
     }
   };
+}
+
+function ensureSchemaMigrations(db) {
+  const columns = new Set(
+    db.prepare("PRAGMA table_info(usage_events)").all().map((row) => row.name)
+  );
+
+  if (!columns.has("machine_identity")) {
+    db.exec("ALTER TABLE usage_events ADD COLUMN machine_identity TEXT");
+  }
 }
 
 export function buildUsageUpsertSql(columns = usageEventsColumns) {

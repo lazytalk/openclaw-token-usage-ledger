@@ -1,5 +1,5 @@
 import { appendFileSync, mkdirSync } from "fs";
-import { homedir } from "os";
+import { homedir, hostname } from "os";
 import { resolve, dirname } from "path";
 import { buildEventId, createUsageDb, defaultDbPath } from "./db.js";
 import { normalizeUsage } from "./normalizeUsage.js";
@@ -106,6 +106,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             const rawChannelName = actor.channelName ?? runtimeHints.channelName;
             const channelName = normalizeChannelName(rawChannelName) ?? rawChannelName;
             const resolvedDisplayName = resolveDisplayName(runtimeHints.sessionKey);
+            const machineIdentity = resolveMachineIdentity(event, ctx);
             db.insertUsageEvent({
               id: buildEventId(event, ctx),
               created_at: new Date().toISOString(),
@@ -116,6 +117,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
               agent_id: ctx.agentId ?? event.agentId ?? runtimeHints.agentId ?? null,
               agent_name: ctx.agentName ?? event.agentName ?? (runtimeHints.agentId ? `agent:${runtimeHints.agentId}` : null),
               runtime_id: ctx.runtimeId ?? event.runtimeId ?? null,
+              machine_identity: machineIdentity,
               platform: actor.platform ?? runtimeHints.platform,
               channel_name: channelName,
               platform_user_id: actor.platformUserId,
@@ -189,6 +191,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           const channelName = normalizeChannelName(rawChannelName) ?? rawChannelName;
           const resolvedCallSource = callSource === "unknown" ? runtimeHints.source ?? callSource : callSource;
           const resolvedDisplayName = resolveDisplayName(runtimeHints.sessionKey);
+          const machineIdentity = resolveMachineIdentity(event, ctx);
           const provider = event.provider ?? ctx.provider ?? null;
           const model = event.model ?? ctx.model ?? null;
           const callMeta = modelCallStarted.get(buildCallKey(event, ctx));
@@ -213,6 +216,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             agent_id: ctx.agentId ?? event.agentId ?? runtimeHints.agentId ?? null,
             agent_name: ctx.agentName ?? event.agentName ?? (runtimeHints.agentId ? `agent:${runtimeHints.agentId}` : null),
             runtime_id: ctx.runtimeId ?? event.runtimeId ?? null,
+            machine_identity: machineIdentity,
             platform: actor.platform ?? runtimeHints.platform,
             channel_name: channelName,
             platform_user_id: actor.platformUserId,
@@ -267,6 +271,30 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       });
     }
   };
+}
+
+function resolveMachineIdentity(event = {}, ctx = {}) {
+  return firstString(
+    ctx.machineIdentity,
+    event.machineIdentity,
+    ctx.machineId,
+    event.machineId,
+    ctx.nodeId,
+    event.nodeId,
+    ctx.hostname,
+    event.hostname,
+    process.env.OPENCLAW_MACHINE_ID,
+    process.env.HOSTNAME,
+    process.env.COMPUTERNAME,
+    hostname()
+  );
+}
+
+function firstString(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return null;
 }
 
 function registerHook(api, hookName, handler) {

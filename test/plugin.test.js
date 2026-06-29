@@ -48,6 +48,8 @@ test("records a TUI model call with agent and source metadata", async () => {
     sessionKey: "agent:main:tui-123",
     agentId: "main",
     runtimeId: "tui-123",
+    machineIdentity: "machine-01",
+    gatewayProfile: "dev-gateway",
     provider: "bailian-token-plan",
     model: "deepseek-v4-flash"
   };
@@ -74,6 +76,8 @@ test("records a TUI model call with agent and source metadata", async () => {
   assert.equal(row.total_tokens, 43);
   assert.equal(row.provider, "bailian-token-plan");
   assert.equal(row.model, "deepseek-v4-flash");
+  assert.equal(row.gateway_profile, "dev-gateway");
+  assert.equal(row.machine_identity, "machine-01");
   assert.equal(row.session_key, "agent:main:tui-123");
   assert.equal(row.raw_usage_json, JSON.stringify({ input: 41, output: 2, total: 43 }));
 });
