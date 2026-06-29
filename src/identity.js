@@ -1,8 +1,4 @@
-import { parseImChannelUserId, parseImChannelPlatform, parseFeishuUserId } from "./classifySource.js";
-
-function parseImChannelPlatformFromId(channelId) {
-  return parseImChannelPlatform(channelId);
-}
+import { parseImChannelUserId, parseImChannelPlatform, parseFeishuUserId, parseFeishuChannelId } from "./classifySource.js";
 
 function firstString(...values) {
   for (const value of values) {
@@ -32,10 +28,11 @@ export function extractIdentity(event = {}, ctx = {}) {
     event.platform,
     ctx.platform,
     channel.platform,
-    feishu.tenant_key || feishu.open_id ? "feishu" : null,
-    wechat.openid || wechat.unionid ? "wechat" : null,
-    feishuUserIdFromChannel ? "feishu" : null,
-    channelUserId ? parseImChannelPlatformFromId(channelId) : null,
+    feishu.tenant_key || feishu.tenantKey || feishu.open_id || feishu.openId ||
+      feishu.union_id || feishu.unionId || feishu.user_id || feishu.userId ? "feishu" : null,
+    wechat.openid || wechat.unionid || wechat.openId || wechat.unionId ? "wechat" : null,
+    feishuUserIdFromChannel || parseFeishuChannelId(channelId) ? "feishu" : null,
+    channelUserId ? parseImChannelPlatform(channelId) : null,
     channel.name
   );
 
