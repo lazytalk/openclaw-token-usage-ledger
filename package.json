@@ -18,7 +18,6 @@
       "model_call_started",
       "model_call_ended",
       "llm_output",
-      "inbound_claim",
       "message_received"
     ],
     "compat": {

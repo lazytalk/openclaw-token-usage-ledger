@@ -8,7 +8,8 @@ test("package.json declares OpenClaw hooks and a semver floor", () => {
   assert.deepEqual(packageJson.openclaw.hooks, [
     "model_call_started",
     "model_call_ended",
-    "llm_output"
+    "llm_output",
+    "message_received"
   ]);
   assert.equal(packageJson.openclaw.install.minHostVersion, ">=2026.6.1");
 });

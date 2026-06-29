@@ -15,6 +15,7 @@ test("registers OpenClaw 2026.6.1 hooks through registerHook", () => {
   });
 
   assert.deepEqual(registered.map((entry) => entry.name), [
+    "message_received",
     "model_call_started",
     "model_call_ended",
     "llm_output"
@@ -121,7 +122,7 @@ test("canonicalizes channel aliases like openclaw-weixin to wechat", async () =>
   assert.equal(metadata.normalizedChannelName, "wechat");
 });
 
-test("resolves display name from userNameMap when event has no name fields", async () => {
+test("resolves display name from message_received metadata senderName", async () => {
   const handlers = {};
   const recordedRows = [];
   const plugin = createTokenUsageLedgerPlugin({
@@ -134,19 +135,28 @@ test("resolves display name from userNameMap when event has no name fields", asy
   });
 
   plugin.register({
-    pluginConfig: {
-      dbPath: ":memory:",
-      userNameMap: {
-        "o9cq80x7h0yhlL0XY7Ivw0Fa3hdU": "Henry Wang"
-      }
-    },
+    pluginConfig: { dbPath: ":memory:" },
     registerHook(name, handler) { handlers[name] = handler; },
     logger: { warn() {} }
   });
 
+  await handlers.message_received(
+    {
+      sessionKey: "agent:main:wx-123",
+      metadata: {
+        senderName: "Henry Wang",
+        senderId: "o9cq80x7h0yhlL0XY7Ivw0Fa3hdU"
+      }
+    },
+    {
+      sessionKey: "agent:main:wx-123"
+    }
+  );
+
   await handlers.llm_output(
     { usage: { input: 5, output: 2, total: 7 } },
     {
+      sessionKey: "agent:main:wx-123",
       channelId: "o9cq80x7h0yhlL0XY7Ivw0Fa3hdU@im.wechat",
       provider: "openai",
       model: "gpt-4.1"

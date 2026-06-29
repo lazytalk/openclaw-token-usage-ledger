@@ -27,8 +27,7 @@ const defaultConfig = {
   defaultCurrency: "USD",
   localModelsCostMode: "zero",
   debugRawUsage: true,
-  pricing: {},
-  userNameMap: {}
+  pricing: {}
 };
 
 export function createTokenUsageLedgerPlugin(options = {}) {
@@ -41,48 +40,16 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       const config = { ...defaultConfig, ...(api.pluginConfig ?? api.config ?? {}) };
       const db = createDb(config.dbPath);
       const modelCallStarted = new Map();
-      // Cache sender names from early hooks (inbound_claim, message_received)
+      // Cache sender names from message_received metadata.
       // Keyed by sessionKey → { senderId, senderName }
       const senderCache = new Map();
       debugLog({ event: "register", dbPath: config.dbPath });
 
-      // Capture sender info from before_agent_run (fires for ALL channels including feishu)
-      registerHook(api, "before_agent_run", async (event = {}, ctx = {}) => {
-        const sessionKey = ctx.sessionKey ?? event.sessionKey;
-        const senderId = event.senderId;
-        const senderName = event.senderName;
-        debugLog({ event: "before_agent_run_fired", sessionKey, senderId, senderName, eventKeys: Object.keys(event), ctxKeys: Object.keys(ctx) });
-        if (sessionKey && (senderName || senderId)) {
-          const existing = senderCache.get(sessionKey) ?? {};
-          senderCache.set(sessionKey, {
-            senderId: senderId ?? existing.senderId ?? null,
-            senderName: senderName ?? existing.senderName ?? null
-          });
-          debugLog({ event: "before_agent_run_cache", sessionKey, senderId, senderName });
-        }
-      });
-
-      // Also capture from inbound_claim (for non-feishu channels)
-      registerHook(api, "inbound_claim", (event = {}, ctx = {}) => {
-        const sessionKey = event.sessionKey ?? ctx.sessionKey;
-        const senderName = event.senderName ?? event.sender?.name ?? event.sender?.displayName;
-        const senderId = event.senderId ?? event.sender?.id;
-        if (sessionKey && (senderName || senderId)) {
-          const existing = senderCache.get(sessionKey) ?? {};
-          senderCache.set(sessionKey, {
-            senderId: senderId ?? existing.senderId ?? null,
-            senderName: senderName ?? existing.senderName ?? null
-          });
-          debugLog({ event: "inbound_claim_cache", sessionKey, senderId, senderName });
-        }
-      });
-
-      // Also capture from message_received as a fallback
+      // Capture senderName from OpenClaw metadata.
       registerHook(api, "message_received", async (event = {}, ctx = {}) => {
         const sessionKey = event.sessionKey ?? ctx.sessionKey;
-        // senderName is in event.metadata per OpenClaw dispatch code
-        const senderName = event.senderName ?? event.metadata?.senderName;
-        const senderId = event.senderId ?? event.metadata?.senderId;
+        const senderName = event.metadata?.senderName;
+        const senderId = event.metadata?.senderId;
         try {
           const logPath = resolve(homedir(), ".openclaw-ops", "plugins", "token-usage-ledger", "message-received.log");
           mkdirSync(dirname(logPath), { recursive: true });
@@ -106,23 +73,10 @@ export function createTokenUsageLedgerPlugin(options = {}) {
         }
       });
 
-      /**
-       * Resolve display name: try ctx.senderName (from llm_output context) first, then direct identity, then cache, then userNameMap.
-       */
-      function resolveDisplayName(actor, sessionKey, ctx = {}) {
-        // Direct from llm_output context senderName (added to OpenClaw source)
-        if (ctx.senderName) return ctx.senderName;
-        // Direct from hook context platformUserDisplayName
-        if (actor.platformUserDisplayName) return actor.platformUserDisplayName;
-        // Look up from sender cache (populated by before_agent_run / inbound_claim / message_received)
+      function resolveDisplayName(sessionKey) {
         if (sessionKey && senderCache.has(sessionKey)) {
           const cached = senderCache.get(sessionKey);
           if (cached?.senderName) return cached.senderName;
-        }
-        // Fallback to static userNameMap config
-        if (actor.platformUserId) {
-          const mapped = config.userNameMap[actor.platformUserId];
-          if (mapped) return mapped;
         }
         return null;
       }
@@ -151,7 +105,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             const callSource = classifyCallSource(event, ctx);
             const rawChannelName = actor.channelName ?? runtimeHints.channelName;
             const channelName = normalizeChannelName(rawChannelName) ?? rawChannelName;
-            const resolvedDisplayName = resolveDisplayName(actor, runtimeHints.sessionKey, ctx);
+            const resolvedDisplayName = resolveDisplayName(runtimeHints.sessionKey);
             db.insertUsageEvent({
               id: buildEventId(event, ctx),
               created_at: new Date().toISOString(),
@@ -234,7 +188,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           const rawChannelName = actor.channelName ?? runtimeHints.channelName;
           const channelName = normalizeChannelName(rawChannelName) ?? rawChannelName;
           const resolvedCallSource = callSource === "unknown" ? runtimeHints.source ?? callSource : callSource;
-          const resolvedDisplayName = resolveDisplayName(actor, runtimeHints.sessionKey, ctx);
+          const resolvedDisplayName = resolveDisplayName(runtimeHints.sessionKey);
           const provider = event.provider ?? ctx.provider ?? null;
           const model = event.model ?? ctx.model ?? null;
           const callMeta = modelCallStarted.get(buildCallKey(event, ctx));
