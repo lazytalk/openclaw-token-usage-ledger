@@ -171,3 +171,176 @@ test("resolves display name from message_received metadata senderName", async ()
   assert.equal(recordedRows[0].platform_user_id, "o9cq80x7h0yhlL0XY7Ivw0Fa3hdU");
   assert.equal(recordedRows[0].platform_user_display_name, "Henry Wang");
 });
+
+test("mirrors recorded rows to central HTTP ingest when configured", async () => {
+  const handlers = {};
+  const recordedRows = [];
+  const mirroredRequests = [];
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent(row) { recordedRows.push(row); }
+      };
+    },
+    fetchImpl: async (url, options = {}) => {
+      mirroredRequests.push({ url, options });
+      return { ok: true, status: 200 };
+    }
+  });
+
+  plugin.register({
+    pluginConfig: {
+      dbPath: ":memory:",
+      mirror: {
+        enabled: true,
+        url: "http://usage-hub.local/api/v1/usage-events",
+        apiKey: "hub-token",
+        timeoutMs: 1000
+      }
+    },
+    registerHook(name, handler) { handlers[name] = handler; },
+    logger: { warn() {} }
+  });
+
+  await handlers.llm_output(
+    {
+      callId: "call-3",
+      usage: { input: 12, output: 4, total: 16 },
+      provider: "openai",
+      model: "gpt-4.1"
+    },
+    {
+      sessionKey: "agent:main:tui-222",
+      runtimeId: "tui-222",
+      gatewayProfile: "central-gateway",
+      machineIdentity: "host-a"
+    }
+  );
+
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(recordedRows.length, 1);
+  assert.equal(mirroredRequests.length, 1);
+  assert.equal(mirroredRequests[0].url, "http://usage-hub.local/api/v1/usage-events");
+  assert.equal(mirroredRequests[0].options.method, "POST");
+  assert.equal(mirroredRequests[0].options.headers.authorization, "Bearer hub-token");
+
+  const mirroredBody = JSON.parse(mirroredRequests[0].options.body);
+  assert.equal(mirroredBody.gateway_profile, "central-gateway");
+  assert.equal(mirroredBody.machine_identity, "host-a");
+  assert.equal(mirroredBody.total_tokens, 16);
+});
+
+test("retries mirror delivery from local outbox until success", async () => {
+  const handlers = {};
+  const recordedRows = [];
+  const mirroredRequests = [];
+  const queue = new Map();
+  let attempt = 0;
+
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent(row) { recordedRows.push(row); },
+        enqueueMirrorEvent(row) {
+          queue.set(row.id, {
+            id: row.id,
+            payload: row,
+            attemptCount: queue.get(row.id)?.attemptCount ?? 0,
+            synced: false,
+            nextRetryAt: null
+          });
+        },
+        listPendingMirrorEvents(limit = 50) {
+          const now = Date.now();
+          return [...queue.values()]
+            .filter((item) => !item.synced && (!item.nextRetryAt || item.nextRetryAt <= now))
+            .slice(0, limit)
+            .map((item) => ({
+              id: item.id,
+              payload: item.payload,
+              attemptCount: item.attemptCount
+            }));
+        },
+        markMirrorEventSynced(id) {
+          const entry = queue.get(id);
+          if (!entry) return;
+          entry.synced = true;
+          queue.set(id, entry);
+        },
+        markMirrorEventFailed(id, nextRetryAt) {
+          const entry = queue.get(id);
+          if (!entry) return;
+          entry.attemptCount += 1;
+          entry.nextRetryAt = Math.min(new Date(nextRetryAt).getTime(), Date.now() - 1);
+          queue.set(id, entry);
+        }
+      };
+    },
+    fetchImpl: async (url, options = {}) => {
+      mirroredRequests.push({ url, options });
+      attempt += 1;
+      if (attempt === 1) return { ok: false, status: 503 };
+      return { ok: true, status: 200 };
+    }
+  });
+
+  plugin.register({
+    pluginConfig: {
+      dbPath: ":memory:",
+      mirror: {
+        enabled: true,
+        url: "http://usage-hub.local/api/v1/usage-events",
+        apiKey: "hub-token",
+        timeoutMs: 1000,
+        retryBaseDelayMs: 1,
+        retryMaxDelayMs: 1,
+        retryIntervalMs: 1,
+        maxBatchSize: 10
+      }
+    },
+    registerHook(name, handler) { handlers[name] = handler; },
+    logger: { warn() {} }
+  });
+
+  await handlers.llm_output(
+    {
+      callId: "call-retry-1",
+      usage: { input: 9, output: 1, total: 10 },
+      provider: "openai",
+      model: "gpt-4.1"
+    },
+    {
+      sessionKey: "agent:main:tui-retry-1",
+      runtimeId: "tui-retry-1",
+      gatewayProfile: "central-gateway",
+      machineIdentity: "host-retry"
+    }
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  await handlers.llm_output(
+    {
+      callId: "call-retry-2",
+      usage: { input: 4, output: 1, total: 5 },
+      provider: "openai",
+      model: "gpt-4.1"
+    },
+    {
+      sessionKey: "agent:main:tui-retry-2",
+      runtimeId: "tui-retry-2",
+      gatewayProfile: "central-gateway",
+      machineIdentity: "host-retry"
+    }
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 80));
+
+  const firstEntry = queue.get(recordedRows[0].id);
+  assert.equal(recordedRows.length, 2);
+  assert.ok(firstEntry?.synced);
+  assert.equal(mirroredRequests.length >= 2, true);
+});

@@ -27,11 +27,22 @@ const defaultConfig = {
   defaultCurrency: "USD",
   localModelsCostMode: "zero",
   debugRawUsage: true,
-  pricing: {}
+  pricing: {},
+  mirror: {
+    enabled: false,
+    url: null,
+    apiKey: null,
+    timeoutMs: 5000,
+    retryIntervalMs: 15000,
+    retryBaseDelayMs: 2000,
+    retryMaxDelayMs: 300000,
+    maxBatchSize: 50
+  }
 };
 
 export function createTokenUsageLedgerPlugin(options = {}) {
   const createDb = options.createDb ?? createUsageDb;
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   return {
     id: "token-usage-ledger",
     name: "Token Usage Ledger",
@@ -81,6 +92,122 @@ export function createTokenUsageLedgerPlugin(options = {}) {
         return null;
       }
 
+      function normalizedMirrorConfig() {
+        const mirror = config.mirror ?? {};
+        return {
+          enabled: Boolean(mirror.enabled && mirror.url && mirror.apiKey),
+          url: firstString(mirror.url),
+          apiKey: firstString(mirror.apiKey),
+          timeoutMs: Number(mirror.timeoutMs ?? 5000) || 5000,
+          retryIntervalMs: Number(mirror.retryIntervalMs ?? 15000) || 15000,
+          retryBaseDelayMs: Number(mirror.retryBaseDelayMs ?? 2000) || 2000,
+          retryMaxDelayMs: Number(mirror.retryMaxDelayMs ?? 300000) || 300000,
+          maxBatchSize: Number(mirror.maxBatchSize ?? 50) || 50
+        };
+      }
+
+      async function mirrorUsageEvent(row) {
+        const mirror = normalizedMirrorConfig();
+        if (!mirror.enabled || !mirror.url || !mirror.apiKey || typeof fetchImpl !== "function") {
+          return { ok: false, error: "mirror_not_configured" };
+        }
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), mirror.timeoutMs);
+
+        try {
+          const response = await fetchImpl(mirror.url, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${mirror.apiKey}`
+            },
+            body: JSON.stringify(row),
+            signal: controller.signal
+          });
+
+          if (!response.ok) {
+            debugLog({ event: "mirror_http_error", status: response.status, url: mirror.url, id: row.id });
+            return { ok: false, error: `http_${response.status}` };
+          }
+          return { ok: true };
+        } catch (error) {
+          debugLog({ event: "mirror_request_error", url: mirror.url, id: row.id, message: error?.message ?? String(error) });
+          return { ok: false, error: error?.message ?? String(error) };
+        } finally {
+          clearTimeout(timeout);
+        }
+      }
+
+      const mirror = normalizedMirrorConfig();
+      const canUseMirrorQueue = mirror.enabled
+        && typeof db.enqueueMirrorEvent === "function"
+        && typeof db.listPendingMirrorEvents === "function"
+        && typeof db.markMirrorEventSynced === "function"
+        && typeof db.markMirrorEventFailed === "function";
+      let mirrorFlushRunning = false;
+
+      function computeNextRetryAt(attemptCount) {
+        const safeAttempt = Math.max(1, Number(attemptCount) || 1);
+        const base = Math.max(100, mirror.retryBaseDelayMs);
+        const max = Math.max(base, mirror.retryMaxDelayMs);
+        const jitterMs = Math.floor(Math.random() * Math.min(base, 1000));
+        const delayMs = Math.min(max, base * (2 ** (safeAttempt - 1))) + jitterMs;
+        return new Date(Date.now() + delayMs).toISOString();
+      }
+
+      async function flushMirrorQueue() {
+        if (!canUseMirrorQueue || mirrorFlushRunning) return;
+        mirrorFlushRunning = true;
+        try {
+          const batchLimit = Math.max(1, Math.min(500, mirror.maxBatchSize));
+          while (true) {
+            const pending = db.listPendingMirrorEvents(batchLimit);
+            if (!pending.length) break;
+
+            for (const entry of pending) {
+              if (!entry?.id) continue;
+              if (!entry.payload || typeof entry.payload !== "object") {
+                db.markMirrorEventSynced(entry.id);
+                continue;
+              }
+
+              const result = await mirrorUsageEvent(entry.payload);
+              if (result.ok) {
+                db.markMirrorEventSynced(entry.id);
+              } else {
+                const attempt = (Number(entry.attemptCount) || 0) + 1;
+                const nextRetryAt = computeNextRetryAt(attempt);
+                db.markMirrorEventFailed(entry.id, nextRetryAt, firstString(result.error, "mirror_failed"));
+              }
+            }
+
+            if (pending.length < batchLimit) break;
+          }
+        } catch (error) {
+          debugLog({ event: "mirror_queue_flush_error", message: error?.message ?? String(error) });
+        } finally {
+          mirrorFlushRunning = false;
+        }
+      }
+
+      if (canUseMirrorQueue) {
+        const timer = setInterval(() => {
+          void flushMirrorQueue();
+        }, Math.max(1000, mirror.retryIntervalMs));
+        if (typeof timer.unref === "function") timer.unref();
+      }
+
+      function enqueueMirror(row) {
+        if (!mirror.enabled) return;
+        if (canUseMirrorQueue) {
+          db.enqueueMirrorEvent(row);
+          void flushMirrorQueue();
+          return;
+        }
+        void mirrorUsageEvent(row);
+      }
+
       registerHook(api, "model_call_started", (event = {}, ctx = {}) => {
         const key = buildCallKey(event, ctx);
         modelCallStarted.set(key, new Date().toISOString());
@@ -107,7 +234,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             const channelName = normalizeChannelName(rawChannelName) ?? rawChannelName;
             const resolvedDisplayName = resolveDisplayName(runtimeHints.sessionKey);
             const machineIdentity = resolveMachineIdentity(event, ctx);
-            db.insertUsageEvent({
+            const row = {
               id: buildEventId(event, ctx),
               created_at: new Date().toISOString(),
               started_at: callMeta.startedAt ?? null,
@@ -156,7 +283,9 @@ export function createTokenUsageLedgerPlugin(options = {}) {
                 rawChannelName,
                 normalizedChannelName: channelName
               })
-            });
+            };
+            db.insertUsageEvent(row);
+            enqueueMirror(row);
           } catch (error) {
             api.logger?.warn?.("token-usage-ledger failed to record failed model call", error);
           }
@@ -205,7 +334,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           const toolNames = event.toolNames ?? ctx.toolNames ?? [];
           const toolCallCount = Number(ctx.toolCallCount ?? event.toolCallCount ?? toolNames.length ?? 0) || 0;
 
-          db.insertUsageEvent({
+          const row = {
             id: buildEventId(event, ctx),
             created_at: new Date().toISOString(),
             started_at: event.startedAt ?? callMeta?.startedAt ?? ctx.startedAt ?? null,
@@ -263,7 +392,9 @@ export function createTokenUsageLedgerPlugin(options = {}) {
               rawChannelName,
               normalizedChannelName: channelName
             })
-          });
+          };
+          db.insertUsageEvent(row);
+          enqueueMirror(row);
         } catch (error) {
           debugLog({ event: "llm_output_error", message: error?.message, stack: error?.stack, code: error?.code });
           api.logger?.warn?.("token-usage-ledger failed to record usage", error);

@@ -21,6 +21,10 @@ export function createUsageDb(path) {
   const dbPath = expandPath(path ?? defaultDbPath());
   let db;
   let insertStatement;
+  let enqueueMirrorStatement;
+  let listPendingMirrorStatement;
+  let markMirrorSyncedStatement;
+  let markMirrorFailedStatement;
 
   function open() {
     if (db) return db;
@@ -39,6 +43,62 @@ export function createUsageDb(path) {
     db.exec(createSchemaSql);
     ensureSchemaMigrations(db);
     insertStatement = db.prepare(buildUsageUpsertSql());
+    enqueueMirrorStatement = db.prepare(`
+      INSERT INTO mirror_outbox (
+        id,
+        payload_json,
+        attempt_count,
+        last_attempt_at,
+        next_retry_at,
+        last_error,
+        synced_at,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        @id,
+        @payload_json,
+        0,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        @now,
+        @now
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        payload_json = excluded.payload_json,
+        updated_at = excluded.updated_at
+    `);
+    listPendingMirrorStatement = db.prepare(`
+      SELECT id, payload_json, attempt_count
+      FROM mirror_outbox
+      WHERE synced_at IS NULL
+        AND (
+          next_retry_at IS NULL
+          OR next_retry_at <= @now
+        )
+      ORDER BY updated_at ASC
+      LIMIT @limit
+    `);
+    markMirrorSyncedStatement = db.prepare(`
+      UPDATE mirror_outbox
+      SET
+        synced_at = @now,
+        last_error = NULL,
+        updated_at = @now
+      WHERE id = @id
+    `);
+    markMirrorFailedStatement = db.prepare(`
+      UPDATE mirror_outbox
+      SET
+        attempt_count = attempt_count + 1,
+        last_attempt_at = @now,
+        next_retry_at = @next_retry_at,
+        last_error = @last_error,
+        updated_at = @now
+      WHERE id = @id
+    `);
     return db;
   }
 
@@ -64,6 +124,55 @@ export function createUsageDb(path) {
       normalized.retry_count ??= 0;
       insertStatement.run(normalized);
     },
+    enqueueMirrorEvent(row) {
+      open();
+      const now = new Date().toISOString();
+      const id = row?.id;
+      if (!id) return;
+      enqueueMirrorStatement.run({
+        id,
+        payload_json: JSON.stringify(row),
+        now
+      });
+    },
+    listPendingMirrorEvents(limit = 50) {
+      open();
+      const safeLimit = Number(limit) > 0 ? Math.min(Number(limit), 500) : 50;
+      const now = new Date().toISOString();
+      const rows = listPendingMirrorStatement.all({ now, limit: safeLimit });
+      return rows.map((row) => {
+        try {
+          return {
+            id: row.id,
+            attemptCount: Number(row.attempt_count) || 0,
+            payload: JSON.parse(row.payload_json)
+          };
+        } catch {
+          return {
+            id: row.id,
+            attemptCount: Number(row.attempt_count) || 0,
+            payload: null
+          };
+        }
+      });
+    },
+    markMirrorEventSynced(id) {
+      open();
+      if (!id) return;
+      const now = new Date().toISOString();
+      markMirrorSyncedStatement.run({ id, now });
+    },
+    markMirrorEventFailed(id, nextRetryAt, errorMessage = null) {
+      open();
+      if (!id || !nextRetryAt) return;
+      const now = new Date().toISOString();
+      markMirrorFailedStatement.run({
+        id,
+        now,
+        next_retry_at: nextRetryAt,
+        last_error: errorMessage
+      });
+    },
     query(sql, params = {}) {
       return open().prepare(sql).all(params);
     },
@@ -74,6 +183,10 @@ export function createUsageDb(path) {
       if (db) db.close();
       db = null;
       insertStatement = null;
+      enqueueMirrorStatement = null;
+      listPendingMirrorStatement = null;
+      markMirrorSyncedStatement = null;
+      markMirrorFailedStatement = null;
     }
   };
 }
@@ -86,6 +199,22 @@ function ensureSchemaMigrations(db) {
   if (!columns.has("machine_identity")) {
     db.exec("ALTER TABLE usage_events ADD COLUMN machine_identity TEXT");
   }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mirror_outbox (
+      id TEXT PRIMARY KEY,
+      payload_json TEXT NOT NULL,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      last_attempt_at TEXT,
+      next_retry_at TEXT,
+      last_error TEXT,
+      synced_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_mirror_outbox_due
+      ON mirror_outbox(synced_at, next_retry_at, updated_at);
+  `);
 }
 
 export function buildUsageUpsertSql(columns = usageEventsColumns) {

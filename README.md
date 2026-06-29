@@ -19,9 +19,29 @@ Stored fields include:
 
 ## Configuration
 
-The plugin runtime schema currently accepts one plugin config key:
+The plugin runtime schema currently accepts:
 
 - `dbPath` (optional): absolute path to the SQLite file.
+- `mirror` (optional): mirror settings for central HTTP ingest.
+
+`mirror` fields:
+
+- `enabled`: enable central mirror posting.
+- `url`: central ingest endpoint.
+- `apiKey`: bearer token for the endpoint.
+- `timeoutMs`: per-request timeout (default `5000`).
+- `retryIntervalMs`: background queue flush interval (default `15000`).
+- `retryBaseDelayMs`: exponential retry base delay (default `2000`).
+- `retryMaxDelayMs`: exponential retry max delay (default `300000`).
+- `maxBatchSize`: queued rows sent per flush (default `50`).
+
+Mirror delivery model:
+
+- Every event is written to local SQLite first.
+- Each event is then enqueued in a persistent local mirror outbox.
+- A background worker flushes due outbox rows to the central endpoint.
+- Failed sends are retried with exponential backoff until they succeed.
+- This gives eventual sync without blocking local ledger recording.
 
 Default database path when `dbPath` is omitted:
 

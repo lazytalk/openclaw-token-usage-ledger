@@ -25,6 +25,44 @@ test("openclaw.plugin.json declares required native manifest fields", () => {
       dbPath: {
         type: "string",
         description: "Absolute path to the SQLite database file. Defaults to a file inside the plugin's data directory."
+      },
+      mirror: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          enabled: {
+            type: "boolean",
+            description: "When true, mirror each locally recorded usage row to a central HTTP ingest endpoint."
+          },
+          url: {
+            type: "string",
+            description: "HTTP endpoint that accepts usage event POST requests."
+          },
+          apiKey: {
+            type: "string",
+            description: "Bearer token used for the central ingest endpoint."
+          },
+          timeoutMs: {
+            type: "number",
+            description: "Mirror request timeout in milliseconds. Defaults to 5000."
+          },
+          retryIntervalMs: {
+            type: "number",
+            description: "Background retry flush interval for unsynced mirror events in milliseconds. Defaults to 15000."
+          },
+          retryBaseDelayMs: {
+            type: "number",
+            description: "Base delay for exponential retry backoff in milliseconds. Defaults to 2000."
+          },
+          retryMaxDelayMs: {
+            type: "number",
+            description: "Maximum delay for exponential retry backoff in milliseconds. Defaults to 300000."
+          },
+          maxBatchSize: {
+            type: "number",
+            description: "Maximum number of queued mirror events sent in a single flush. Defaults to 50."
+          }
+        }
       }
     }
   });
