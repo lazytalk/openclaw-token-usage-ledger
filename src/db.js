@@ -8,7 +8,7 @@ import { createSchemaSql, usageEventsColumns } from "./schema.js";
 const require = createRequire(import.meta.url);
 
 export function defaultDbPath() {
-  return resolve(homedir(), ".openclaw-ops", "plugins", "token-usage-ledger", "usage.sqlite");
+  return resolve(homedir(), ".openclaw", "plugins", "token-usage-ledger", "usage.sqlite");
 }
 
 export function expandPath(path = defaultDbPath()) {

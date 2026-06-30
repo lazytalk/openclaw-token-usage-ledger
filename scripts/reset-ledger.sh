@@ -16,7 +16,7 @@ if [ -z "$DB_PATH" ] && [ -f "$CONFIG_PATH" ]; then
 fi
 
 if [ -z "$DB_PATH" ]; then
-  DB_PATH="$HOME/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite"
+  DB_PATH="$HOME/.openclaw/plugins/token-usage-ledger/usage.sqlite"
 fi
 
 DB_PATH="${DB_PATH/#\~/$HOME}"

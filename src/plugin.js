@@ -9,7 +9,7 @@ import { calculateCost } from "./cost.js";
 import { normalizeChannelName } from "./normalizeChannel.js";
 
 // Always write debug log to the plugin data dir; override with LEDGER_DEBUG_LOG env var.
-const _defaultDebugLog = resolve(homedir(), ".openclaw-ops", "plugins", "token-usage-ledger", "debug.jsonl");
+const _defaultDebugLog = resolve(homedir(), ".openclaw", "plugins", "token-usage-ledger", "debug.jsonl");
 const DEBUG_LOG = process.env.LEDGER_DEBUG_LOG ?? _defaultDebugLog;
 function debugLog(obj) {
   try {
@@ -62,7 +62,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
         const senderName = event.metadata?.senderName;
         const senderId = event.metadata?.senderId;
         try {
-          const logPath = resolve(homedir(), ".openclaw-ops", "plugins", "token-usage-ledger", "message-received.log");
+          const logPath = resolve(homedir(), ".openclaw", "plugins", "token-usage-ledger", "message-received.log");
           mkdirSync(dirname(logPath), { recursive: true });
           appendFileSync(logPath, JSON.stringify({
             ts: new Date().toISOString(),

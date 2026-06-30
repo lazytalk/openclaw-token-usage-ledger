@@ -663,7 +663,7 @@
                 "allowConversationAccess": true
         },
         "config": {
-                "dbPath": "/Users/henrywang/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite"
+                "dbPath": "/Users/henrywang/.openclaw/plugins/token-usage-ledger/usage.sqlite"
         }
       }
     },

@@ -45,14 +45,14 @@ Mirror delivery model:
 
 Default database path when `dbPath` is omitted:
 
-- `~/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite`
+- `~/.openclaw/plugins/token-usage-ledger/usage.sqlite`
 
 To inspect the ledger on a host, set `DB` from config and fall back to that default path if the config omits `dbPath`:
 
 ```bash
 DB="$(jq -r '.plugins.entries["token-usage-ledger"].config.dbPath // empty' "$HOME/.openclaw/openclaw.json")"
 if [ -z "$DB" ]; then
-  DB="$HOME/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite"
+  DB="$HOME/.openclaw/plugins/token-usage-ledger/usage.sqlite"
 fi
 ```
 
@@ -68,7 +68,7 @@ Example plugin entry in `openclaw.json`:
           "allowConversationAccess": true
         },
         "config": {
-          "dbPath": "/Users/you/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite"
+          "dbPath": "/Users/you/.openclaw/plugins/token-usage-ledger/usage.sqlite"
         }
       }
     },
@@ -113,7 +113,7 @@ bash scripts/setup-openclaw.sh
 To also pin a specific SQLite path, pass it as the first argument or set `OPENCLAW_DB_PATH`:
 
 ```bash
-bash scripts/setup-openclaw.sh /Users/you/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite
+bash scripts/setup-openclaw.sh /Users/you/.openclaw/plugins/token-usage-ledger/usage.sqlite
 ```
 
 To start a clean smoke test from an empty ledger, back up and clear the current SQLite files first:
@@ -184,6 +184,17 @@ Create an artifact and bump version in one step:
 npm run release:patch
 ```
 
+By default, bump releases also create:
+
+- a release commit: `chore(release): vX.Y.Z`
+- an annotated git tag: `vX.Y.Z`
+
+To bump and pack without creating a tag:
+
+```bash
+node scripts/release-pack.mjs --bump patch --no-tag
+```
+
 Other bump levels:
 
 ```bash
@@ -192,6 +203,19 @@ npm run release:major
 ```
 
 These commands create a tarball under `artifacts/` and print the exact install command for OpenClaw.
+
+### GitHub auto-release on version bump
+
+This repo includes a GitHub Actions workflow at `.github/workflows/release-on-version-bump.yml`.
+
+Behavior on each push to `main`:
+
+- Reads `package.json` version.
+- Compares it to the latest `v*` tag.
+- If version increased, it creates and pushes a new tag (`vX.Y.Z`), packs the plugin tarball, and publishes a GitHub Release with the artifact.
+- If version did not increase, it skips release.
+
+This means packaging can be fully automated with one rule: bump `package.json` version when you want a release.
 
 Versioning policy recommendation:
 
