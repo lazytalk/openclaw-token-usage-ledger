@@ -233,7 +233,7 @@ npm run release:minor
 npm run release:major
 ```
 
-These commands create a tarball under `artifacts/` and print the exact install command for OpenClaw.
+These commands create tarballs under `assets/` and print the exact install command for OpenClaw.
 
 ### GitHub auto-release on version bump
 
@@ -248,28 +248,31 @@ Behavior on each push to `main`:
 
 This means packaging can be fully automated with one rule: bump `package.json` version when you want a release.
 
-Install the generated GitHub release asset by downloading it first, then installing the local file with `openclaw plugins install`:
+Install the generated GitHub release asset by downloading the stable latest file, then installing the local file with `openclaw plugins install`:
 
 ```bash
-VERSION=0.1.4
-TMP_TGZ="${TMPDIR:-/tmp}/token-usage-ledger-${VERSION}.tgz"
+TMP_TGZ="${TMPDIR:-/tmp}/token-usage-ledger.tgz"
 
 curl -fL -o "$TMP_TGZ" \
-  "https://github.com/lazytalk/openclaw-token-usage-ledger/releases/download/v${VERSION}/token-usage-ledger-${VERSION}.tgz"
+  "https://github.com/lazytalk/openclaw-token-usage-ledger/releases/latest/download/token-usage-ledger.tgz"
 
 openclaw plugins install "$TMP_TGZ" --force
 openclaw gateway restart
 openclaw plugins inspect token-usage-ledger --runtime --json
 ```
 
+Each release publishes both assets:
+
+- versioned historical artifact: `token-usage-ledger-X.Y.Z.tgz`
+- stable latest alias: `token-usage-ledger.tgz`
+
 macOS quick upgrade (copy/paste):
 
 ```bash
-VERSION=0.1.4
-TMP_TGZ="${TMPDIR:-/tmp}/token-usage-ledger-${VERSION}.tgz"
+TMP_TGZ="${TMPDIR:-/tmp}/token-usage-ledger.tgz"
 
 curl -fL -o "$TMP_TGZ" \
-  "https://github.com/lazytalk/openclaw-token-usage-ledger/releases/download/v${VERSION}/token-usage-ledger-${VERSION}.tgz" \
+  "https://github.com/lazytalk/openclaw-token-usage-ledger/releases/latest/download/token-usage-ledger.tgz" \
   && openclaw plugins install "$TMP_TGZ" --force \
   && openclaw gateway restart \
   && openclaw plugins inspect token-usage-ledger --runtime --json

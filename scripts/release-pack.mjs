@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
@@ -77,7 +77,7 @@ function printUsage() {
       "Behavior:",
       "  - Optional version bump with npm version --no-git-tag-version",
       "  - When bumping, creates a release commit and annotated git tag by default",
-      "  - Creates an npm tarball under ./artifacts",
+      "  - Creates npm tarballs under ./assets (versioned + stable latest)",
     ].join("\n") + "\n",
   );
 }
@@ -143,12 +143,12 @@ function main() {
     runGit(["tag", "-a", tagName, "-m", tagName], { stdio: "inherit" });
   }
 
-  const artifactsDir = resolve(process.cwd(), "artifacts");
-  if (!existsSync(artifactsDir)) {
-    mkdirSync(artifactsDir, { recursive: true });
+  const assetsDir = resolve(process.cwd(), "assets");
+  if (!existsSync(assetsDir)) {
+    mkdirSync(assetsDir, { recursive: true });
   }
 
-  const packJson = runNpm(["pack", "--pack-destination", artifactsDir, "--json"]);
+  const packJson = runNpm(["pack", "--pack-destination", assetsDir, "--json"]);
   const parsed = JSON.parse(packJson);
   const first = Array.isArray(parsed) ? parsed[0] : parsed;
   const fileName = first?.filename;
@@ -156,8 +156,11 @@ function main() {
     throw new Error("Could not determine packed file name from npm pack output");
   }
 
-  const artifactPath = join(artifactsDir, fileName);
+  const artifactPath = join(assetsDir, fileName);
+  const latestPath = join(assetsDir, "token-usage-ledger.tgz");
+  copyFileSync(artifactPath, latestPath);
   process.stdout.write(`\nRelease artifact created:\n${artifactPath}\n`);
+  process.stdout.write(`Latest alias updated:\n${latestPath}\n`);
   process.stdout.write(`Current package version: ${version}\n\n`);
   if (shouldTag) {
     process.stdout.write(`Created git tag: ${tagName}\n\n`);
@@ -165,7 +168,7 @@ function main() {
     process.stdout.write("git push origin main --follow-tags\n\n");
   }
   process.stdout.write("Install on target host with:\n");
-  process.stdout.write(`openclaw plugins install \"${artifactPath}\"\n`);
+  process.stdout.write(`openclaw plugins install \"${latestPath}\"\n`);
 }
 
 try {
