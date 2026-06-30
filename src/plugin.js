@@ -50,6 +50,15 @@ export function createTokenUsageLedgerPlugin(options = {}) {
     register(api = {}) {
       const config = { ...defaultConfig, ...(api.pluginConfig ?? api.config ?? {}) };
       const db = createDb(config.dbPath);
+      try {
+        if (typeof db.query === "function") {
+          db.query("SELECT 1 AS ok");
+        }
+      } catch (error) {
+        const hint = sqliteBindingTroubleshootingMessage(error);
+        api.logger?.error?.(hint);
+        throw new Error(hint);
+      }
       const modelCallStarted = new Map();
       const toolCallsByRun = new Map();
       // Cache sender names from message_received metadata.
@@ -656,6 +665,16 @@ function isToolCallBlockType(value) {
     || normalized === "tool_use"
     || normalized === "functioncall"
     || normalized === "function_call";
+}
+
+function sqliteBindingTroubleshootingMessage(error) {
+  const message = error?.message ?? String(error ?? "unknown error");
+  return [
+    "token-usage-ledger failed to initialize SQLite storage.",
+    "This release uses a non-native sql.js backend, so host native bindings are not required.",
+    "If this error persists, reinstall the plugin package and restart gateway.",
+    `Original error: ${message}`
+  ].join(" ");
 }
 
 function extractToolCallsFromAssistant(assistant) {

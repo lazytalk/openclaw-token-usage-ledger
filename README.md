@@ -130,15 +130,16 @@ Healthy runtime output should show:
 - `typedHooks`: `llm_output`, `message_received`, `model_call_started`, `model_call_ended`
 - no diagnostics about blocked `llm_output`
 
-The production SQLite writer uses `better-sqlite3`. The local unit tests avoid native dependencies where possible, but a real OpenClaw install should run `npm install` first.
+The production SQLite writer uses `sql.js` (WASM SQLite), so it does not require native Node bindings.
 
-For OpenClaw `2026.6.1`, dependency installation depends on the install mode:
+For OpenClaw `2026.6.1`, managed installs remain deterministic because `sql.js` does not depend on native postinstall build steps.
 
-- `git:` plugin installs run `npm install --omit=dev` automatically before OpenClaw loads the plugin.
-- npm/package installs are installed into OpenClaw's managed npm root automatically.
-- Raw local directory installs should be treated as source installs; run `npm install` in this repo first so `better-sqlite3` exists.
+If plugin runtime logs still show SQLite initialization errors, reinstall and restart:
 
-If `better-sqlite3` cannot use a prebuilt binary on your remote machine, the machine needs a working native build toolchain for Node modules.
+```bash
+openclaw plugins install /path/to/token-usage-ledger-<version>.tgz --force
+openclaw gateway restart
+```
 
 ### Supported install paths (OpenClaw 2026.6.1)
 

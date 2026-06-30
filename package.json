@@ -1,6 +1,6 @@
 {
   "name": "token-usage-ledger",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Durable SQLite token usage ledger and report command for OpenClaw.",
   "type": "module",
   "main": "src/index.js",
@@ -35,7 +35,7 @@
     "release:major": "node scripts/release-pack.mjs --bump major"
   },
   "dependencies": {
-    "better-sqlite3": "^11.10.0"
+    "sql.js": "^1.13.0"
   },
   "devDependencies": {},
   "engines": {

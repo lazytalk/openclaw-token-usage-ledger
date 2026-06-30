@@ -2,15 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-test("package.json declares OpenClaw hooks and a semver floor", () => {
+test("package.json declares native OpenClaw extension metadata and semver floor", () => {
   const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
-  assert.deepEqual(packageJson.openclaw.hooks, [
-    "model_call_started",
-    "model_call_ended",
-    "llm_output",
-    "message_received"
-  ]);
+  assert.deepEqual(packageJson.openclaw.extensions, ["./src/index.js"]);
+  assert.equal(packageJson.openclaw.hooks, undefined);
   assert.equal(packageJson.openclaw.install.minHostVersion, ">=2026.6.1");
 });
 

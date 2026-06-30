@@ -4,7 +4,14 @@ import { createTokenUsageLedgerPlugin } from "../src/plugin.js";
 
 test("registers OpenClaw 2026.6.1 hooks through registerHook", () => {
   const registered = [];
-  const plugin = createTokenUsageLedgerPlugin();
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent() {}
+      };
+    }
+  });
 
   plugin.register({
     pluginConfig: { dbPath: ":memory:" },
