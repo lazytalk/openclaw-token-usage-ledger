@@ -7,11 +7,18 @@ import initSqlJs from "sql.js";
 import { createSchemaSql, usageEventsColumns } from "./schema.js";
 
 const require = createRequire(import.meta.url);
-const SQL = await initSqlJs({
-  locateFile(file) {
-    return require.resolve(`sql.js/dist/${file}`);
+let sqlInitPromise = null;
+
+function getSqlJs() {
+  if (!sqlInitPromise) {
+    sqlInitPromise = initSqlJs({
+      locateFile(file) {
+        return require.resolve(`sql.js/dist/${file}`);
+      }
+    });
   }
-});
+  return sqlInitPromise;
+}
 
 export function defaultDbPath() {
   return resolve(homedir(), ".openclaw", "plugins", "token-usage-ledger", "usage.sqlite");
@@ -69,10 +76,11 @@ export function createUsageDb(path) {
     renameSync(tempPath, dbPath);
   }
 
-  function open() {
+  async function open() {
     if (db) return db;
     mkdirSync(dirname(dbPath), { recursive: true });
     const bytes = existsSync(dbPath) ? readFileSync(dbPath) : null;
+    const SQL = await getSqlJs();
     db = bytes && bytes.length ? new SQL.Database(bytes) : new SQL.Database();
     db.exec(createSchemaSql);
     const migrated = ensureSchemaMigrations(db, sqlAll);
@@ -84,8 +92,8 @@ export function createUsageDb(path) {
 
   return {
     path: dbPath,
-    insertUsageEvent(row) {
-      open();
+    async insertUsageEvent(row) {
+      await open();
       const normalized = {};
       for (const column of usageEventsColumns) normalized[column] = row[column] ?? null;
       normalized.created_at ||= new Date().toISOString();
@@ -105,8 +113,8 @@ export function createUsageDb(path) {
       sqlRun(buildUsageUpsertSql(), normalized);
       persist();
     },
-    enqueueMirrorEvent(row) {
-      open();
+    async enqueueMirrorEvent(row) {
+      await open();
       const now = new Date().toISOString();
       const id = row?.id;
       if (!id) return;
@@ -143,8 +151,8 @@ export function createUsageDb(path) {
       });
       persist();
     },
-    listPendingMirrorEvents(limit = 50) {
-      open();
+    async listPendingMirrorEvents(limit = 50) {
+      await open();
       const safeLimit = Number(limit) > 0 ? Math.min(Number(limit), 500) : 50;
       const now = new Date().toISOString();
       const rows = sqlAll(`
@@ -174,8 +182,8 @@ export function createUsageDb(path) {
         }
       });
     },
-    markMirrorEventSynced(id) {
-      open();
+    async markMirrorEventSynced(id) {
+      await open();
       if (!id) return;
       const now = new Date().toISOString();
       sqlRun(`
@@ -188,8 +196,8 @@ export function createUsageDb(path) {
       `, { id, now });
       persist();
     },
-    markMirrorEventFailed(id, nextRetryAt, errorMessage = null) {
-      open();
+    async markMirrorEventFailed(id, nextRetryAt, errorMessage = null) {
+      await open();
       if (!id || !nextRetryAt) return;
       const now = new Date().toISOString();
       sqlRun(`
@@ -209,15 +217,15 @@ export function createUsageDb(path) {
       });
       persist();
     },
-    query(sql, params = {}) {
-      open();
+    async query(sql, params = {}) {
+      await open();
       return sqlAll(sql, params);
     },
-    get(sql, params = {}) {
-      const rows = this.query(sql, params);
+    async get(sql, params = {}) {
+      const rows = await this.query(sql, params);
       return rows[0] ?? null;
     },
-    close() {
+    async close() {
       if (db) db.close();
       db = null;
     }

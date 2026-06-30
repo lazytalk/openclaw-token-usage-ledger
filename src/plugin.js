@@ -50,15 +50,13 @@ export function createTokenUsageLedgerPlugin(options = {}) {
     register(api = {}) {
       const config = { ...defaultConfig, ...(api.pluginConfig ?? api.config ?? {}) };
       const db = createDb(config.dbPath);
-      try {
-        if (typeof db.query === "function") {
-          db.query("SELECT 1 AS ok");
-        }
-      } catch (error) {
+      const dbReady = Promise.resolve()
+        .then(() => db.query("SELECT 1 AS ok"))
+        .catch((error) => {
         const hint = sqliteBindingTroubleshootingMessage(error);
         api.logger?.error?.(hint);
         throw new Error(hint);
-      }
+      });
       const modelCallStarted = new Map();
       const toolCallsByRun = new Map();
       // Cache sender names from message_received metadata.
@@ -168,27 +166,28 @@ export function createTokenUsageLedgerPlugin(options = {}) {
 
       async function flushMirrorQueue() {
         if (!canUseMirrorQueue || mirrorFlushRunning) return;
+        await dbReady;
         mirrorFlushRunning = true;
         try {
           const batchLimit = Math.max(1, Math.min(500, mirror.maxBatchSize));
           while (true) {
-            const pending = db.listPendingMirrorEvents(batchLimit);
+            const pending = await db.listPendingMirrorEvents(batchLimit);
             if (!pending.length) break;
 
             for (const entry of pending) {
               if (!entry?.id) continue;
               if (!entry.payload || typeof entry.payload !== "object") {
-                db.markMirrorEventSynced(entry.id);
+                await db.markMirrorEventSynced(entry.id);
                 continue;
               }
 
               const result = await mirrorUsageEvent(entry.payload);
               if (result.ok) {
-                db.markMirrorEventSynced(entry.id);
+                await db.markMirrorEventSynced(entry.id);
               } else {
                 const attempt = (Number(entry.attemptCount) || 0) + 1;
                 const nextRetryAt = computeNextRetryAt(attempt);
-                db.markMirrorEventFailed(entry.id, nextRetryAt, firstString(result.error, "mirror_failed"));
+                await db.markMirrorEventFailed(entry.id, nextRetryAt, firstString(result.error, "mirror_failed"));
               }
             }
 
@@ -208,10 +207,10 @@ export function createTokenUsageLedgerPlugin(options = {}) {
         if (typeof timer.unref === "function") timer.unref();
       }
 
-      function enqueueMirror(row) {
+      async function enqueueMirror(row) {
         if (!mirror.enabled) return;
         if (canUseMirrorQueue) {
-          db.enqueueMirrorEvent(row);
+          await db.enqueueMirrorEvent(row);
           void flushMirrorQueue();
           return;
         }
@@ -232,7 +231,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
         toolCallsByRun.set(runKey, mergeToolSummaries(existing, summary));
       });
 
-      registerHook(api, "model_call_ended", (event = {}, ctx = {}) => {
+      registerHook(api, "model_call_ended", async (event = {}, ctx = {}) => {
         const key = buildCallKey(event, ctx);
         const startedAt = modelCallStarted.get(key);
         const runtimeHints = deriveRuntimeHints(event, ctx);
@@ -246,6 +245,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
         };
         modelCallStarted.set(key, callMeta);
         if (event.outcome === "error") {
+          await dbReady;
           const runKey = buildRunKey(event, ctx);
           if (runKey) toolCallsByRun.delete(runKey);
           try {
@@ -305,8 +305,8 @@ export function createTokenUsageLedgerPlugin(options = {}) {
                 normalizedChannelName: channelName
               })
             };
-            db.insertUsageEvent(row);
-            enqueueMirror(row);
+            await db.insertUsageEvent(row);
+            await enqueueMirror(row);
           } catch (error) {
             api.logger?.warn?.("token-usage-ledger failed to record failed model call", error);
           }
@@ -315,6 +315,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
 
       registerHook(api, "llm_output", async (event = {}, ctx = {}) => {
         try {
+          await dbReady;
           const rawUsage = event.usage ?? event.rawUsage ?? event.response?.usage;
           if (!rawUsage) {
             debugLog({
@@ -419,8 +420,8 @@ export function createTokenUsageLedgerPlugin(options = {}) {
               normalizedChannelName: channelName
             })
           };
-          db.insertUsageEvent(row);
-          enqueueMirror(row);
+          await db.insertUsageEvent(row);
+          await enqueueMirror(row);
         } catch (error) {
           debugLog({ event: "llm_output_error", message: error?.message, stack: error?.stack, code: error?.code });
           api.logger?.warn?.("token-usage-ledger failed to record usage", error);

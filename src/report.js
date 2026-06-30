@@ -61,12 +61,12 @@ export function buildWhere(args) {
   };
 }
 
-export function runReport(argv = process.argv.slice(2)) {
+export async function runReport(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
   const db = createUsageDb(expandPath(args.db));
   const { where, params } = buildWhere(args);
-  const rows = db.query(`SELECT * FROM usage_events ${where} ORDER BY created_at ASC`, params);
-  db.close();
+  const rows = await db.query(`SELECT * FROM usage_events ${where} ORDER BY created_at ASC`, params);
+  await db.close();
   const summary = summarizeRows(rows);
   const callRows = args.session ? rows : [];
 
@@ -117,10 +117,12 @@ function parseToolNames(value) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  try {
-    console.log(runReport());
-  } catch (error) {
-    console.error(error.message);
-    process.exitCode = 1;
-  }
+  runReport()
+    .then((output) => {
+      console.log(output);
+    })
+    .catch((error) => {
+      console.error(error.message);
+      process.exitCode = 1;
+    });
 }
