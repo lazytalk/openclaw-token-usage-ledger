@@ -60,7 +60,7 @@ jobs:
           fi
 
           LATEST_VERSION="${LATEST_TAG#v}"
-          CMP="$(node -e "
+          CMP="$(A="$VERSION" B="$LATEST_VERSION" node -e "
             const a = process.env.A || '';
             const b = process.env.B || '';
             const parse = (v) => {
@@ -85,7 +85,7 @@ jobs:
               }
             }
             console.log('eq');
-          " A="$VERSION" B="$LATEST_VERSION")"
+          ")"
 
           if [ "$CMP" = "invalid" ]; then
             echo "Could not compare package version '$VERSION' with latest tag '$LATEST_TAG'"
