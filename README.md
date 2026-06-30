@@ -262,6 +262,19 @@ openclaw gateway restart
 openclaw plugins inspect token-usage-ledger --runtime --json
 ```
 
+macOS quick upgrade (copy/paste):
+
+```bash
+VERSION=0.1.3
+TMP_TGZ="${TMPDIR:-/tmp}/token-usage-ledger-${VERSION}.tgz"
+
+curl -fL -o "$TMP_TGZ" \
+  "https://github.com/lazytalk/openclaw-token-usage-ledger/releases/download/v${VERSION}/token-usage-ledger-${VERSION}.tgz" \
+  && openclaw plugins install "$TMP_TGZ" --force \
+  && openclaw gateway restart \
+  && openclaw plugins inspect token-usage-ledger --runtime --json
+```
+
 Versioning policy recommendation:
 
 - Do not bump package version for every commit.
