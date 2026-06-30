@@ -168,6 +168,37 @@ openclaw plugins inspect token-usage-ledger --runtime --json
 
 Healthy output should show `hookCount: 3` and no diagnostics about blocked `llm_output`.
 
+## Release Artifact Deployment
+
+For normal production rollout, prefer a versioned package artifact instead of manual file-by-file sync.
+
+Create an artifact from this repo:
+
+```bash
+npm run release:pack
+```
+
+Create an artifact and bump version in one step:
+
+```bash
+npm run release:patch
+```
+
+Other bump levels:
+
+```bash
+npm run release:minor
+npm run release:major
+```
+
+These commands create a tarball under `artifacts/` and print the exact install command for OpenClaw.
+
+Versioning policy recommendation:
+
+- Do not bump package version for every commit.
+- Bump package version for each release/deployment artifact (patch/minor/major by semantic versioning).
+- Multiple commits can belong to one versioned release.
+
 ## Report Command
 
 For a git-clone install (most common on a deployed host), run directly with `node`:
