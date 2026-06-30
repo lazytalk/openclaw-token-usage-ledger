@@ -331,8 +331,9 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             pricing: config.pricing,
             localModelsCostMode: config.localModelsCostMode
           }) : { estimatedCostUsd: 0, inputCostUsd: 0, outputCostUsd: 0, cacheCostUsd: 0, costMode: "unknown" };
-          const toolNames = event.toolNames ?? ctx.toolNames ?? [];
-          const toolCallCount = Number(ctx.toolCallCount ?? event.toolCallCount ?? toolNames.length ?? 0) || 0;
+          const toolSummary = extractToolSummary(event);
+          const toolNames = toolSummary.toolNames;
+          const toolCallCount = toolSummary.toolCallCount;
 
           const row = {
             id: buildEventId(event, ctx),
@@ -526,4 +527,39 @@ function deriveRuntimeHints(event = {}, ctx = {}) {
   }
 
   return hints;
+}
+
+function extractToolSummary(event = {}) {
+  const names = new Set();
+  const extracted = extractToolCallsFromAssistant(event.lastAssistant);
+  for (const name of extracted.names) {
+    names.add(name);
+  }
+  return {
+    toolNames: [...names],
+    toolCallCount: extracted.callCount
+  };
+}
+
+function extractToolCallsFromAssistant(assistant) {
+  const names = new Set();
+  if (!assistant || typeof assistant !== "object") {
+    return { callCount: 0, names };
+  }
+  const content = assistant.content;
+  if (!Array.isArray(content)) {
+    return { callCount: 0, names };
+  }
+
+  let callCount = 0;
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    if (block.type !== "toolCall") continue;
+
+    callCount += 1;
+    const name = firstString(block.name);
+    if (name) names.add(name);
+  }
+
+  return { callCount, names };
 }

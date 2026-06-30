@@ -172,6 +172,87 @@ test("resolves display name from message_received metadata senderName", async ()
   assert.equal(recordedRows[0].platform_user_display_name, "Henry Wang");
 });
 
+test("derives tool names/count from llm_output lastAssistant content", async () => {
+  const handlers = {};
+  const recordedRows = [];
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent(row) { recordedRows.push(row); }
+      };
+    }
+  });
+
+  plugin.register({
+    pluginConfig: { dbPath: ":memory:" },
+    registerHook(name, handler) { handlers[name] = handler; },
+    logger: { warn() {} }
+  });
+
+  await handlers.llm_output(
+    {
+      usage: { input: 15, output: 5, total: 20 },
+      lastAssistant: {
+        role: "assistant",
+        content: [
+          { type: "text", text: "I will inspect the file." },
+          { type: "toolCall", id: "call-1", name: "read", arguments: { path: "README.md" } },
+          { type: "toolCall", id: "call-2", name: "grep", arguments: { query: "TODO" } }
+        ]
+      }
+    },
+    {
+      sessionKey: "agent:main:tui-tool-1",
+      provider: "openai",
+      model: "gpt-5.4"
+    }
+  );
+
+  assert.equal(recordedRows.length, 1);
+  const row = recordedRows[0];
+  assert.equal(row.had_tool_calls, 1);
+  assert.equal(row.tool_call_count, 2);
+  assert.equal(row.tool_names_json, JSON.stringify(["read", "grep"]));
+});
+
+test("ignores tool metadata outside event.lastAssistant for deterministic extraction", async () => {
+  const handlers = {};
+  const recordedRows = [];
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent(row) { recordedRows.push(row); }
+      };
+    }
+  });
+
+  plugin.register({
+    pluginConfig: { dbPath: ":memory:" },
+    registerHook(name, handler) { handlers[name] = handler; },
+    logger: { warn() {} }
+  });
+
+  await handlers.llm_output(
+    {
+      usage: { input: 7, output: 3, total: 10 }
+    },
+    {
+      sessionKey: "agent:main:tui-tool-2",
+      provider: "openai",
+      model: "gpt-5.4",
+      toolMetas: [{ toolName: "read" }]
+    }
+  );
+
+  assert.equal(recordedRows.length, 1);
+  const row = recordedRows[0];
+  assert.equal(row.had_tool_calls, 0);
+  assert.equal(row.tool_call_count, 0);
+  assert.equal(row.tool_names_json, null);
+});
+
 test("mirrors recorded rows to central HTTP ingest when configured", async () => {
   const handlers = {};
   const recordedRows = [];
