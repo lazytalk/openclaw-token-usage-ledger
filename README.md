@@ -126,8 +126,8 @@ That moves the current database, WAL, and SHM files into a timestamped backup fo
 
 Healthy runtime output should show:
 
-- `hookCount: 3`
-- `typedHooks`: `llm_output`, `model_call_started`, `model_call_ended`
+- `hookCount: 4`
+- `typedHooks`: `llm_output`, `message_received`, `model_call_started`, `model_call_ended`
 - no diagnostics about blocked `llm_output`
 
 The production SQLite writer uses `better-sqlite3`. The local unit tests avoid native dependencies where possible, but a real OpenClaw install should run `npm install` first.
@@ -181,12 +181,21 @@ After restarting, verify the plugin is loaded correctly:
 openclaw plugins inspect token-usage-ledger --runtime --json
 ```
 
-Healthy output should show `hookCount: 3` and no diagnostics about blocked `llm_output`.
+Healthy output should show `hookCount: 4` and no diagnostics about blocked `llm_output`.
 
-If you install from release artifacts, update by installing the new local `.tgz` and restarting:
+If you install from release artifacts, update with one of these paths and then restart:
+
+- tracked install update:
 
 ```bash
-openclaw plugins install /path/to/token-usage-ledger-<version>.tgz
+openclaw plugins update /path/to/token-usage-ledger-<version>.tgz
+openclaw gateway restart
+```
+
+- direct replace (when install says plugin already exists):
+
+```bash
+openclaw plugins install /path/to/token-usage-ledger-<version>.tgz --force
 openclaw gateway restart
 ```
 
@@ -248,7 +257,9 @@ TMP_TGZ="${TMPDIR:-/tmp}/token-usage-ledger-${VERSION}.tgz"
 curl -fL -o "$TMP_TGZ" \
   "https://github.com/lazytalk/openclaw-token-usage-ledger/releases/download/v${VERSION}/token-usage-ledger-${VERSION}.tgz"
 
-openclaw plugins install "$TMP_TGZ"
+openclaw plugins install "$TMP_TGZ" --force
+openclaw gateway restart
+openclaw plugins inspect token-usage-ledger --runtime --json
 ```
 
 Versioning policy recommendation:
