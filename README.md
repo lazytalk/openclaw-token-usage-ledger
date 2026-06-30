@@ -140,6 +140,21 @@ For OpenClaw `2026.6.1`, dependency installation depends on the install mode:
 
 If `better-sqlite3` cannot use a prebuilt binary on your remote machine, the machine needs a working native build toolchain for Node modules.
 
+### Supported install paths (OpenClaw 2026.6.1)
+
+For this OpenClaw build, `openclaw plugins install` supports local paths (and linked local source), but URL npm specs are rejected.
+
+Supported:
+
+- Local package artifact (`.tgz`) path
+- Local source directory with `--link`
+
+Not supported in this build:
+
+- `git+https://...`
+- `https://...`
+- Other URL-based npm specs
+
 ## Updating the Plugin
 
 On the deployed host, run:
@@ -167,6 +182,13 @@ openclaw plugins inspect token-usage-ledger --runtime --json
 ```
 
 Healthy output should show `hookCount: 3` and no diagnostics about blocked `llm_output`.
+
+If you install from release artifacts, update by installing the new local `.tgz` and restarting:
+
+```bash
+openclaw plugins install /path/to/token-usage-ledger-<version>.tgz
+openclaw gateway restart
+```
 
 ## Release Artifact Deployment
 
@@ -216,6 +238,18 @@ Behavior on each push to `main`:
 - If version did not increase, it skips release.
 
 This means packaging can be fully automated with one rule: bump `package.json` version when you want a release.
+
+Install the generated GitHub release asset by downloading it first, then installing the local file with `openclaw plugins install`:
+
+```bash
+VERSION=0.1.2
+TMP_TGZ="${TMPDIR:-/tmp}/token-usage-ledger-${VERSION}.tgz"
+
+curl -fL -o "$TMP_TGZ" \
+  "https://github.com/lazytalk/openclaw-token-usage-ledger/releases/download/v${VERSION}/token-usage-ledger-${VERSION}.tgz"
+
+openclaw plugins install "$TMP_TGZ"
+```
 
 Versioning policy recommendation:
 
