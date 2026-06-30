@@ -1,6 +1,6 @@
 {
   "name": "token-usage-ledger",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Durable SQLite token usage ledger and report command for OpenClaw.",
   "type": "module",
   "main": "src/index.js",
@@ -18,12 +18,6 @@
   "openclaw": {
     "extensions": [
       "./src/index.js"
-    ],
-    "hooks": [
-      "model_call_started",
-      "model_call_ended",
-      "llm_output",
-      "message_received"
     ],
     "compat": {
       "pluginApi": "2026.6.1"
