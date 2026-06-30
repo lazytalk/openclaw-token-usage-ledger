@@ -27,10 +27,21 @@ export function createUsageDb(path) {
   const dbPath = expandPath(path ?? defaultDbPath());
   let db;
 
+  function toSqlJsNamedParams(params = {}) {
+    const mapped = {};
+    for (const [key, value] of Object.entries(params)) {
+      mapped[key] = value;
+      mapped[`@${key}`] = value;
+      mapped[`:${key}`] = value;
+      mapped[`$${key}`] = value;
+    }
+    return mapped;
+  }
+
   function sqlRun(sql, params = {}) {
     const statement = db.prepare(sql);
     try {
-      statement.run(params);
+      statement.run(toSqlJsNamedParams(params));
     } finally {
       statement.free();
     }
@@ -39,7 +50,7 @@ export function createUsageDb(path) {
   function sqlAll(sql, params = {}) {
     const statement = db.prepare(sql);
     try {
-      statement.bind(params);
+      statement.bind(toSqlJsNamedParams(params));
       const rows = [];
       while (statement.step()) rows.push(statement.getAsObject());
       return rows;
@@ -63,12 +74,6 @@ export function createUsageDb(path) {
     mkdirSync(dirname(dbPath), { recursive: true });
     const bytes = existsSync(dbPath) ? readFileSync(dbPath) : null;
     db = bytes && bytes.length ? new SQL.Database(bytes) : new SQL.Database();
-    db.create_function("eventRank", (status) => {
-      if (status === "success") return 2;
-      if (status === "error") return 1;
-      if (status) return 1;
-      return 0;
-    });
     db.exec(createSchemaSql);
     const migrated = ensureSchemaMigrations(db, sqlAll);
     if (migrated || !bytes || !bytes.length) {
@@ -259,7 +264,20 @@ export function buildUsageUpsertSql(columns = usageEventsColumns) {
       VALUES (${values})
       ON CONFLICT(id) DO UPDATE SET
         ${updates}
-      WHERE eventRank(excluded.status) >= eventRank(usage_events.status)
+      WHERE
+        CASE
+          WHEN excluded.status = 'success' THEN 2
+          WHEN excluded.status = 'error' THEN 1
+          WHEN excluded.status IS NOT NULL AND excluded.status <> '' THEN 1
+          ELSE 0
+        END
+        >=
+        CASE
+          WHEN usage_events.status = 'success' THEN 2
+          WHEN usage_events.status = 'error' THEN 1
+          WHEN usage_events.status IS NOT NULL AND usage_events.status <> '' THEN 1
+          ELSE 0
+        END
     `;
 }
 

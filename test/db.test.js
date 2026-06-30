@@ -7,7 +7,8 @@ test("builds an UPSERT that prefers richer rows and leaves the primary key untou
   const sql = buildUsageUpsertSql();
 
   assert.match(sql, /ON CONFLICT\(id\) DO UPDATE SET/);
-  assert.match(sql, /WHERE eventRank\(excluded\.status\) >= eventRank\(usage_events\.status\)/);
+  assert.match(sql, /CASE\s+WHEN excluded\.status = 'success' THEN 2/);
+  assert.match(sql, /CASE\s+WHEN usage_events\.status = 'success' THEN 2/);
   assert.doesNotMatch(sql, /\bid\s*=\s*excluded\.id\b/);
 });
 
