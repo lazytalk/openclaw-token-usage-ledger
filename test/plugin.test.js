@@ -17,6 +17,7 @@ test("registers OpenClaw 2026.6.1 hooks through registerHook", () => {
   assert.deepEqual(registered.map((entry) => entry.name), [
     "message_received",
     "model_call_started",
+    "after_tool_call",
     "model_call_ended",
     "llm_output"
   ]);
@@ -172,7 +173,7 @@ test("resolves display name from message_received metadata senderName", async ()
   assert.equal(recordedRows[0].platform_user_display_name, "Henry Wang");
 });
 
-test("derives tool names/count from llm_output lastAssistant content", async () => {
+test("derives tool names/count from llm_output lastAssistant content with type and name variants", async () => {
   const handlers = {};
   const recordedRows = [];
   const plugin = createTokenUsageLedgerPlugin({
@@ -197,8 +198,8 @@ test("derives tool names/count from llm_output lastAssistant content", async () 
         role: "assistant",
         content: [
           { type: "text", text: "I will inspect the file." },
-          { type: "toolCall", id: "call-1", name: "read", arguments: { path: "README.md" } },
-          { type: "toolCall", id: "call-2", name: "grep", arguments: { query: "TODO" } }
+          { type: "toolUse", id: "call-1", tool_name: "read", arguments: { path: "README.md" } },
+          { type: "function_call", id: "call-2", function_name: "grep", arguments: { query: "TODO" } }
         ]
       }
     },
@@ -206,6 +207,60 @@ test("derives tool names/count from llm_output lastAssistant content", async () 
       sessionKey: "agent:main:tui-tool-1",
       provider: "openai",
       model: "gpt-5.4"
+    }
+  );
+
+  assert.equal(recordedRows.length, 1);
+  const row = recordedRows[0];
+  assert.equal(row.had_tool_calls, 1);
+  assert.equal(row.tool_call_count, 2);
+  assert.equal(row.tool_names_json, JSON.stringify(["read", "grep"]));
+});
+
+test("merges after_tool_call events into llm_output record for the same run", async () => {
+  const handlers = {};
+  const recordedRows = [];
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent(row) { recordedRows.push(row); }
+      };
+    }
+  });
+
+  plugin.register({
+    pluginConfig: { dbPath: ":memory:" },
+    registerHook(name, handler) { handlers[name] = handler; },
+    logger: { warn() {} }
+  });
+
+  handlers.after_tool_call(
+    {
+      runId: "run-merge-1",
+      tool_call: { function_name: "read" }
+    },
+    { runId: "run-merge-1" }
+  );
+
+  handlers.after_tool_call(
+    {
+      runId: "run-merge-1",
+      toolUse: { tool_name: "grep" }
+    },
+    { runId: "run-merge-1" }
+  );
+
+  await handlers.llm_output(
+    {
+      runId: "run-merge-1",
+      usage: { input: 10, output: 3, total: 13 },
+      provider: "openai",
+      model: "gpt-5.4"
+    },
+    {
+      runId: "run-merge-1",
+      sessionKey: "agent:main:tui-tool-3"
     }
   );
 

@@ -251,7 +251,7 @@ This means packaging can be fully automated with one rule: bump `package.json` v
 Install the generated GitHub release asset by downloading it first, then installing the local file with `openclaw plugins install`:
 
 ```bash
-VERSION=0.1.3
+VERSION=0.1.4
 TMP_TGZ="${TMPDIR:-/tmp}/token-usage-ledger-${VERSION}.tgz"
 
 curl -fL -o "$TMP_TGZ" \
@@ -265,7 +265,7 @@ openclaw plugins inspect token-usage-ledger --runtime --json
 macOS quick upgrade (copy/paste):
 
 ```bash
-VERSION=0.1.3
+VERSION=0.1.4
 TMP_TGZ="${TMPDIR:-/tmp}/token-usage-ledger-${VERSION}.tgz"
 
 curl -fL -o "$TMP_TGZ" \

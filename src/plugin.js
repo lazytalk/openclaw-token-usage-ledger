@@ -51,6 +51,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       const config = { ...defaultConfig, ...(api.pluginConfig ?? api.config ?? {}) };
       const db = createDb(config.dbPath);
       const modelCallStarted = new Map();
+      const toolCallsByRun = new Map();
       // Cache sender names from message_received metadata.
       // Keyed by sessionKey → { senderId, senderName }
       const senderCache = new Map();
@@ -213,6 +214,15 @@ export function createTokenUsageLedgerPlugin(options = {}) {
         modelCallStarted.set(key, new Date().toISOString());
       });
 
+      registerHook(api, "after_tool_call", (event = {}, ctx = {}) => {
+        const runKey = buildRunKey(event, ctx);
+        const summary = extractToolSummaryFromAfterToolCall(event, ctx);
+        if (!runKey || summary.toolCallCount <= 0) return;
+
+        const existing = toolCallsByRun.get(runKey) ?? { toolCallCount: 0, toolNames: [] };
+        toolCallsByRun.set(runKey, mergeToolSummaries(existing, summary));
+      });
+
       registerHook(api, "model_call_ended", (event = {}, ctx = {}) => {
         const key = buildCallKey(event, ctx);
         const startedAt = modelCallStarted.get(key);
@@ -227,6 +237,8 @@ export function createTokenUsageLedgerPlugin(options = {}) {
         };
         modelCallStarted.set(key, callMeta);
         if (event.outcome === "error") {
+          const runKey = buildRunKey(event, ctx);
+          if (runKey) toolCallsByRun.delete(runKey);
           try {
             const actor = extractIdentity(event, ctx);
             const callSource = classifyCallSource(event, ctx);
@@ -324,6 +336,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           const provider = event.provider ?? ctx.provider ?? null;
           const model = event.model ?? ctx.model ?? null;
           const callMeta = modelCallStarted.get(buildCallKey(event, ctx));
+          const runKey = buildRunKey(event, ctx);
           const cost = rawUsage ? calculateCost({
             provider,
             model,
@@ -331,7 +344,10 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             pricing: config.pricing,
             localModelsCostMode: config.localModelsCostMode
           }) : { estimatedCostUsd: 0, inputCostUsd: 0, outputCostUsd: 0, cacheCostUsd: 0, costMode: "unknown" };
-          const toolSummary = extractToolSummary(event);
+          const assistantToolSummary = extractToolSummary(event);
+          const runToolSummary = runKey ? (toolCallsByRun.get(runKey) ?? { toolNames: [], toolCallCount: 0 }) : { toolNames: [], toolCallCount: 0 };
+          const toolSummary = mergeToolSummaries(assistantToolSummary, runToolSummary);
+          if (runKey) toolCallsByRun.delete(runKey);
           const toolNames = toolSummary.toolNames;
           const toolCallCount = toolSummary.toolCallCount;
 
@@ -454,6 +470,17 @@ function buildCallKey(event = {}, ctx = {}) {
   ].map((value) => value ?? "").join("|");
 }
 
+function buildRunKey(event = {}, ctx = {}) {
+  return firstString(
+    ctx.runId,
+    event.runId,
+    ctx.sessionId,
+    event.sessionId,
+    ctx.sessionKey,
+    event.sessionKey
+  );
+}
+
 function buildMetadataJson(event = {}, ctx = {}, extra = {}) {
   return JSON.stringify({
     eventKeys: Object.keys(event ?? {}),
@@ -530,15 +557,105 @@ function deriveRuntimeHints(event = {}, ctx = {}) {
 }
 
 function extractToolSummary(event = {}) {
-  const names = new Set();
   const extracted = extractToolCallsFromAssistant(event.lastAssistant);
-  for (const name of extracted.names) {
-    names.add(name);
-  }
   return {
-    toolNames: [...names],
+    toolNames: [...extracted.names],
     toolCallCount: extracted.callCount
   };
+}
+
+function extractToolSummaryFromAfterToolCall(event = {}, ctx = {}) {
+  const names = new Set();
+  let callCount = 0;
+
+  const candidates = [
+    event,
+    event.toolCall,
+    event.tool_call,
+    event.toolUse,
+    event.tool_use,
+    event.functionCall,
+    event.function_call,
+    event.call,
+    event.payload,
+    event.data,
+    ctx.toolCall,
+    ctx.tool_call,
+    ctx.toolUse,
+    ctx.tool_use,
+    ctx.functionCall,
+    ctx.function_call,
+    ctx.call,
+    ctx.payload,
+    ctx.data
+  ];
+
+  for (const candidate of candidates) {
+    const result = extractToolCallFromCandidate(candidate);
+    if (!result) continue;
+    callCount += 1;
+    if (result.name) names.add(result.name);
+    break;
+  }
+
+  return {
+    toolNames: [...names],
+    toolCallCount: callCount
+  };
+}
+
+function extractToolCallFromCandidate(candidate) {
+  if (!candidate || typeof candidate !== "object") return null;
+
+  const name = firstString(
+    candidate.name,
+    candidate.tool_name,
+    candidate.tool,
+    candidate.function_name,
+    candidate.function,
+    candidate.toolCall?.name,
+    candidate.toolCall?.tool_name,
+    candidate.toolCall?.tool,
+    candidate.toolCall?.function_name,
+    candidate.toolCall?.function,
+    candidate.tool_call?.name,
+    candidate.tool_call?.tool_name,
+    candidate.tool_call?.tool,
+    candidate.tool_call?.function_name,
+    candidate.tool_call?.function
+  );
+
+  if (name) {
+    return { name };
+  }
+
+  return null;
+}
+
+function mergeToolSummaries(primary = {}, secondary = {}) {
+  const names = new Set();
+  for (const name of primary.toolNames ?? []) {
+    if (typeof name === "string" && name.trim()) names.add(name);
+  }
+  for (const name of secondary.toolNames ?? []) {
+    if (typeof name === "string" && name.trim()) names.add(name);
+  }
+
+  return {
+    toolNames: [...names],
+    toolCallCount: Number(primary.toolCallCount ?? 0) + Number(secondary.toolCallCount ?? 0)
+  };
+}
+
+function isToolCallBlockType(value) {
+  if (typeof value !== "string") return false;
+  const normalized = value.replace(/\s+/g, "").toLowerCase();
+  return normalized === "toolcall"
+    || normalized === "tooluse"
+    || normalized === "tool_call"
+    || normalized === "tool_use"
+    || normalized === "functioncall"
+    || normalized === "function_call";
 }
 
 function extractToolCallsFromAssistant(assistant) {
@@ -554,10 +671,16 @@ function extractToolCallsFromAssistant(assistant) {
   let callCount = 0;
   for (const block of content) {
     if (!block || typeof block !== "object") continue;
-    if (block.type !== "toolCall") continue;
+    if (!isToolCallBlockType(block.type)) continue;
 
     callCount += 1;
-    const name = firstString(block.name);
+    const name = firstString(
+      block.name,
+      block.tool_name,
+      block.tool,
+      block.function_name,
+      block.function
+    );
     if (name) names.add(name);
   }
 
