@@ -64,6 +64,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       // Cache sender names from message_received metadata.
       // Keyed by sessionKey and runId so model hooks with empty ctx can still be attributed.
       const senderCache = new Map();
+      let pendingSender = null;
       debugLog({ event: "register", dbPath: config.dbPath });
 
       // Capture senderName from OpenClaw metadata.
@@ -88,7 +89,10 @@ export function createTokenUsageLedgerPlugin(options = {}) {
         } catch(e) { /* silent */ }
         if (senderName || senderId) {
           cacheSender({ sessionKey, runId, senderId, senderName });
+          if (!firstString(runId)) pendingSender = { sessionKey, senderId, senderName, cachedAt: Date.now() };
           debugLog({ event: "message_received_cache", sessionKey, runId, senderId, senderName });
+        } else {
+          pendingSender = null;
         }
       });
 
@@ -110,6 +114,17 @@ export function createTokenUsageLedgerPlugin(options = {}) {
         return {};
       }
 
+      function claimPendingSender(runId) {
+        if (!firstString(runId) || !pendingSender) return;
+        if (Date.now() - pendingSender.cachedAt > 5 * 60 * 1000) {
+          pendingSender = null;
+          return;
+        }
+        cacheSender({ ...pendingSender, runId });
+        debugLog({ event: "message_received_run_claim", runId, sessionKey: pendingSender.sessionKey, senderId: pendingSender.senderId, senderName: pendingSender.senderName });
+        pendingSender = null;
+      }
+
       const { enqueueMirror } = createMirrorManager({
         mirrorConfig: config.mirror,
         db,
@@ -120,12 +135,14 @@ export function createTokenUsageLedgerPlugin(options = {}) {
 
       registerHook(api, "model_call_started", (event = {}, ctx = {}) => {
         const key = buildCallKey(event, ctx);
+        claimPendingSender(buildRunKey(event, ctx));
         modelCallStarted.set(key, new Date().toISOString());
       });
 
       registerHook(api, "after_tool_call", (event = {}, ctx = {}) => {
         const runKey = buildRunKey(event, ctx);
         const summary = extractToolSummaryFromAfterToolCall(event, ctx);
+        claimPendingSender(runKey);
         debugLog({
           event: "after_tool_call",
           runKey,
@@ -246,6 +263,8 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           const callSource = classifyCallSource(event, ctx);
           const rawChannelName = actor.channelName ?? null;
           const channelName = normalizeChannelName(rawChannelName) ?? rawChannelName;
+          claimPendingSender(runtimeMeta.runId);
+          claimPendingSender(runtimeMeta.runId);
           const resolvedSender = resolveSender(runtimeMeta);
           const provider = event.provider ?? null;
           const model = event.model ?? null;
