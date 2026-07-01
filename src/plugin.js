@@ -88,10 +88,10 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             metadataSenderName: event.metadata?.senderName
           }) + "\n");
         } catch(e) { /* silent */ }
-        if (senderName || senderId) {
+        if (hasAttribution(attribution)) {
           cacheSender(attribution);
           if (!firstString(runId)) pendingSender = { ...attribution, cachedAt: Date.now() };
-          debugLog({ event: "message_received_cache", sessionKey, runId, senderId, senderName });
+          debugLog({ event: "message_received_cache", sessionKey, runId, senderId, senderName, agentId: attribution.agentId, platform: attribution.platform, channelName: attribution.channelName });
         } else {
           pendingSender = null;
         }
@@ -113,7 +113,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       function resolveSender({ sessionKey, runId }) {
         for (const key of senderCacheKeys({ sessionKey, runId })) {
           const cached = senderCache.get(key);
-          if (cached?.senderName || cached?.senderId) return cached;
+          if (hasAttribution(cached)) return cached;
         }
         return {};
       }
@@ -364,6 +364,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             })
           };
           await db.insertUsageEvent(row);
+          debugLog({ event: "usage_event_inserted", id: row.id, runId: row.run_id, sessionKey: row.session_key, status: row.status, callSource: row.call_source, totalTokens: row.total_tokens });
           await enqueueMirror(row);
         } catch (error) {
           debugLog({ event: "llm_output_error", message: error?.message, stack: error?.stack, code: error?.code });
@@ -383,6 +384,20 @@ function firstString(...values) {
 
 function dropNullish(obj = {}) {
   return Object.fromEntries(Object.entries(obj).filter(([, value]) => value !== null && value !== undefined));
+}
+
+function hasAttribution(attribution = {}) {
+  return Boolean(
+    attribution.senderName ||
+    attribution.senderId ||
+    attribution.sessionKey ||
+    attribution.runId ||
+    attribution.agentId ||
+    attribution.platform ||
+    attribution.channelName ||
+    attribution.channelId ||
+    attribution.messageProvider
+  );
 }
 
 function buildMessageAttribution(event = {}, ctx = {}) {
@@ -486,13 +501,14 @@ function parseSessionKey(sessionKey) {
   const channelName = parts[2] || null;
   const channelKind = parts[3] || null;
   const channelId = parts.slice(4).join(":") || null;
+  const isTuiSession = /^tui-/i.test(channelName ?? "");
   const isChatSession = Boolean(channelId || channelKind === "direct" || channelKind === "group");
-  const platform = isChatSession ? normalizeChannelName(channelName) ?? channelName : null;
+  const platform = isTuiSession ? "openclaw" : isChatSession ? normalizeChannelName(channelName) ?? channelName : null;
   const directUserId = channelKind === "direct" ? parseImChannelUserId(channelId) ?? channelId : null;
 
   return {
     agentId,
-    channelName: isChatSession ? channelName : null,
+    channelName: isTuiSession ? "tui" : isChatSession ? channelName : null,
     messageProvider: platform,
     platform,
     channelId,

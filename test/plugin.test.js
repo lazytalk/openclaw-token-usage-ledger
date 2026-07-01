@@ -438,6 +438,62 @@ test("derives WeChat channel attribution from cached message_received sessionKey
   assert.equal(recordedRows[0].platform_user_display_name, "Henry Wang");
 });
 
+test("caches TUI message_received session attribution without sender identity", async () => {
+  const handlers = {};
+  const recordedRows = [];
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent(row) { recordedRows.push(row); }
+      };
+    }
+  });
+
+  plugin.register({
+    pluginConfig: { dbPath: ":memory:" },
+    registerHook(name, handler) { handlers[name] = handler; },
+    logger: { warn() {} }
+  });
+
+  await handlers.message_received(
+    {
+      sessionKey: "agent:main:tui-4897f34a-f573-41c5-abf3-9c9a018e232f",
+      runId: null,
+      metadata: {
+        provider: "tui",
+        surface: "tui"
+      }
+    },
+    {}
+  );
+
+  handlers.model_call_started(
+    {
+      runId: "run-tui-1"
+    },
+    {}
+  );
+
+  await handlers.llm_output(
+    {
+      runId: "run-tui-1",
+      sessionId: "session-tui-1",
+      provider: "kwevllm",
+      model: "qwen",
+      usage: { input: 5, output: 2, total: 7 }
+    },
+    {}
+  );
+
+  assert.equal(recordedRows.length, 1);
+  assert.equal(recordedRows[0].session_key, "agent:main:tui-4897f34a-f573-41c5-abf3-9c9a018e232f");
+  assert.equal(recordedRows[0].agent_id, "main");
+  assert.equal(recordedRows[0].platform, "openclaw");
+  assert.equal(recordedRows[0].channel_name, "tui");
+  assert.equal(recordedRows[0].call_source, "tui");
+});
+
 test("derives tool names/count from strict OpenClaw lastAssistant tool blocks", async () => {
   const handlers = {};
   const recordedRows = [];
