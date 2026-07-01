@@ -341,18 +341,19 @@ function registerHook(api, hookName, handler) {
 }
 
 function buildCallKey(event = {}, ctx = {}) {
+  // ctx owns execution-context fields; event owns call-specific fields.
   return [
-    event.runId,
+    ctx.runId,
     event.callId,
-    event.sessionId,
-    event.sessionKey,
+    ctx.sessionId,
+    ctx.sessionKey,
     event.provider,
     event.model
   ].map((value) => value ?? "").join("|");
 }
 
 function buildRunKey(event = {}, ctx = {}) {
-  return firstString(event.runId);
+  return typeof ctx.runId === "string" && ctx.runId.trim() ? ctx.runId : null;
 }
 
 function buildMetadataJson(event = {}, ctx = {}, extra = {}) {
