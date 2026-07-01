@@ -118,6 +118,14 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       registerHook(api, "after_tool_call", (event = {}, ctx = {}) => {
         const runKey = buildRunKey(event, ctx);
         const summary = extractToolSummaryFromAfterToolCall(event, ctx);
+        debugLog({
+          event: "after_tool_call",
+          runKey,
+          toolName: event.toolName ?? null,
+          toolCallCount: summary.toolCallCount,
+          eventKeys: Object.keys(event),
+          contextKeys: Object.keys(ctx)
+        });
         if (!runKey || summary.toolCallCount <= 0) return;
 
         const existing = toolCallsByRun.get(runKey) ?? { toolCallCount: 0, toolNames: [] };
@@ -245,6 +253,19 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           const assistantToolSummary = extractToolSummary(event);
           const runToolSummary = runKey ? (toolCallsByRun.get(runKey) ?? { toolNames: [], toolCallCount: 0 }) : { toolNames: [], toolCallCount: 0 };
           const toolSummary = mergeToolSummaries(assistantToolSummary, runToolSummary);
+          debugLog({
+            event: "llm_output_tools",
+            runKey,
+            assistantToolCount: assistantToolSummary.toolCallCount,
+            runToolCount: runToolSummary.toolCallCount,
+            mergedToolCount: toolSummary.toolCallCount,
+            hasLastAssistant: !!event.lastAssistant,
+            lastAssistantContentType: Array.isArray(event.lastAssistant?.content) ? "array" : typeof event.lastAssistant?.content,
+            eventCtxRunId: ctx.runId ?? null,
+            eventRunId: event.runId ?? null,
+            eventKeys: Object.keys(event),
+            contextKeys: Object.keys(ctx)
+          });
           if (runKey) toolCallsByRun.delete(runKey);
           const toolNames = toolSummary.toolNames;
           const toolCallCount = toolSummary.toolCallCount;
@@ -328,7 +349,9 @@ function firstString(...values) {
 
 function registerHook(api, hookName, handler) {
   if (typeof api.on === "function") {
-    api.on(hookName, handler);
+    // New SDK: api.on passes a single event object; context is at event.context.
+    // Wrap to preserve the (event, ctx) signature used throughout this plugin.
+    api.on(hookName, (event = {}) => handler(event, event.context ?? {}));
     return;
   }
   if (typeof api.registerHook === "function") {
@@ -342,8 +365,9 @@ function registerHook(api, hookName, handler) {
 
 function buildCallKey(event = {}, ctx = {}) {
   // ctx owns execution-context fields; event owns call-specific fields.
+  // model_call_started/model_call_ended also carry runId on the event itself (docs).
   return [
-    ctx.runId,
+    ctx.runId ?? event.runId,
     event.callId,
     ctx.sessionId,
     ctx.sessionKey,
@@ -353,7 +377,9 @@ function buildCallKey(event = {}, ctx = {}) {
 }
 
 function buildRunKey(event = {}, ctx = {}) {
-  return typeof ctx.runId === "string" && ctx.runId.trim() ? ctx.runId : null;
+  // ctx.runId is the canonical source; event.runId is listed as optional on tool hooks (docs).
+  const id = ctx.runId ?? event.runId ?? null;
+  return typeof id === "string" && id.trim() ? id : null;
 }
 
 function buildMetadataJson(event = {}, ctx = {}, extra = {}) {

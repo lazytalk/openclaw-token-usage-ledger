@@ -312,6 +312,49 @@ test("persists ordered tool list with duplicates from lastAssistant blocks", asy
   assert.equal(row.tool_names_json, JSON.stringify(["command1", "command1", "command2"]));
 });
 
+test("records tool calls via api.on single-argument dispatch (new SDK contract)", async () => {
+  // New SDK: api.on calls handler(event) with context embedded at event.context.
+  // registerHook must wrap the handler so ctx = event.context, not {}.
+  const onHandlers = {};
+  const recordedRows = [];
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent(row) { recordedRows.push(row); }
+      };
+    }
+  });
+
+  plugin.register({
+    pluginConfig: { dbPath: ":memory:" },
+    on(name, handler) {
+      onHandlers[name] = handler;
+    },
+    logger: { warn() {} }
+  });
+
+  const runCtx = { runId: "run-on-1", sessionKey: "agent:main:tui-on-1" };
+
+  // New SDK passes a single merged object; context is at event.context.
+  onHandlers.after_tool_call({ toolName: "search", context: runCtx });
+  onHandlers.after_tool_call({ toolName: "read_file", context: runCtx });
+
+  await onHandlers.llm_output({
+    usage: { input: 20, output: 5, total: 25 },
+    provider: "openai",
+    model: "gpt-5",
+    context: runCtx
+  });
+
+  assert.equal(recordedRows.length, 1);
+  const row = recordedRows[0];
+  assert.equal(row.had_tool_calls, 1);
+  assert.equal(row.tool_call_count, 2);
+  assert.equal(row.tool_names_json, JSON.stringify(["search", "read_file"]));
+  assert.equal(row.run_id, "run-on-1");
+});
+
 test("merges after_tool_call events into llm_output record for the same run", async () => {
   const handlers = {};
   const recordedRows = [];
