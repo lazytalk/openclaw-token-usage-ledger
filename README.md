@@ -83,6 +83,17 @@ Example plugin entry in `openclaw.json`:
 
 If you reinstall the plugin, OpenClaw may remove the entry from `openclaw.json`. Reapply the config patch above after reinstalling.
 
+### Feishu Display Names
+
+For Feishu/Lark bots, the display name recorded in `platform_user_display_name` comes from OpenClaw's `message_received` sender metadata. The Feishu app behind each bot must be granted contact read permission manually in the Feishu developer/admin console; otherwise Feishu may only return the sender open id, and rows will show values such as `ou_...` instead of a human name.
+
+Grant the bot app the user basic information read permission:
+
+- permission scope: `contact:user.base:readonly`
+- console label: `Read user basic information` / `获取用户基本信息`
+
+After granting the permission, publish or apply the app permission change, approve it in the tenant admin console if required, restart the OpenClaw gateway, and send a fresh Feishu message. A healthy `message_received` log entry should include a real `senderName`, and new ledger rows should store that value in `platform_user_display_name`.
+
 ## Install For Local Development
 
 ```bash
