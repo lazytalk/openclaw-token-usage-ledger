@@ -271,6 +271,55 @@ test("caches message_received display name from context sessionKey", async () =>
   assert.equal(recordedRows[0].platform_user_display_name, "Context Henry");
 });
 
+test("caches message_received sender by runId when llm_output context is empty", async () => {
+  const handlers = {};
+  const recordedRows = [];
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent(row) { recordedRows.push(row); }
+      };
+    }
+  });
+
+  plugin.register({
+    pluginConfig: { dbPath: ":memory:" },
+    registerHook(name, handler) { handlers[name] = handler; },
+    logger: { warn() {} }
+  });
+
+  await handlers.message_received(
+    {
+      sessionKey: "agent:main:feishu:direct:ou_5483d4c149c7b1ef00ea7297d41256da",
+      runId: "run-feishu-1",
+      senderId: "ou_5483d4c149c7b1ef00ea7297d41256da",
+      metadata: {
+        senderName: "Ning Ba",
+        senderId: "ou_5483d4c149c7b1ef00ea7297d41256da"
+      }
+    },
+    {}
+  );
+
+  await handlers.llm_output(
+    {
+      runId: "run-feishu-1",
+      sessionId: "session-feishu-1",
+      provider: "bailian-token-plan",
+      model: "deepseek-v4-pro",
+      usage: { input: 5, output: 2, total: 7 }
+    },
+    {}
+  );
+
+  assert.equal(recordedRows.length, 1);
+  assert.equal(recordedRows[0].run_id, "run-feishu-1");
+  assert.equal(recordedRows[0].session_id, "session-feishu-1");
+  assert.equal(recordedRows[0].platform_user_id, "ou_5483d4c149c7b1ef00ea7297d41256da");
+  assert.equal(recordedRows[0].platform_user_display_name, "Ning Ba");
+});
+
 test("derives tool names/count from strict OpenClaw lastAssistant tool blocks", async () => {
   const handlers = {};
   const recordedRows = [];

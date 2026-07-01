@@ -62,13 +62,14 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       const modelCallStarted = new Map();
       const toolCallsByRun = new Map();
       // Cache sender names from message_received metadata.
-      // Keyed by sessionKey → { senderId, senderName }
+      // Keyed by sessionKey and runId so model hooks with empty ctx can still be attributed.
       const senderCache = new Map();
       debugLog({ event: "register", dbPath: config.dbPath });
 
       // Capture senderName from OpenClaw metadata.
       registerHook(api, "message_received", async (event = {}, ctx = {}) => {
         const sessionKey = event.sessionKey ?? ctx.sessionKey ?? null;
+        const runId = event.runId ?? ctx.runId ?? null;
         const senderName = firstString(event.metadata?.senderName);
         const senderId = firstString(event.senderId, ctx.senderId, event.metadata?.senderId);
         try {
@@ -77,6 +78,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           appendFileSync(logPath, JSON.stringify({
             ts: new Date().toISOString(),
             sessionKey,
+            runId,
             senderName,
             senderId,
             eventKeys: Object.keys(event),
@@ -84,22 +86,28 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             metadataSenderName: event.metadata?.senderName
           }) + "\n");
         } catch(e) { /* silent */ }
-        if (sessionKey && (senderName || senderId)) {
-          const existing = senderCache.get(sessionKey) ?? {};
-          senderCache.set(sessionKey, {
-            senderId: senderId ?? existing.senderId ?? null,
-            senderName: senderName ?? existing.senderName ?? null
-          });
-          debugLog({ event: "message_received_cache", sessionKey, senderId, senderName });
+        if (senderName || senderId) {
+          cacheSender({ sessionKey, runId, senderId, senderName });
+          debugLog({ event: "message_received_cache", sessionKey, runId, senderId, senderName });
         }
       });
 
-      function resolveDisplayName(sessionKey) {
-        if (sessionKey && senderCache.has(sessionKey)) {
-          const cached = senderCache.get(sessionKey);
-          if (cached?.senderName) return cached.senderName;
+      function cacheSender({ sessionKey, runId, senderId, senderName }) {
+        for (const key of senderCacheKeys({ sessionKey, runId })) {
+          const existing = senderCache.get(key) ?? {};
+          senderCache.set(key, {
+            senderId: senderId ?? existing.senderId ?? null,
+            senderName: senderName ?? existing.senderName ?? null
+          });
         }
-        return null;
+      }
+
+      function resolveSender({ sessionKey, runId }) {
+        for (const key of senderCacheKeys({ sessionKey, runId })) {
+          const cached = senderCache.get(key);
+          if (cached?.senderName || cached?.senderId) return cached;
+        }
+        return {};
       }
 
       const { enqueueMirror } = createMirrorManager({
@@ -154,7 +162,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             const callSource = classifyCallSource(event, ctx);
             const rawChannelName = actor.channelName ?? null;
             const channelName = normalizeChannelName(rawChannelName) ?? rawChannelName;
-            const resolvedDisplayName = resolveDisplayName(ctx.sessionKey ?? null);
+            const resolvedSender = resolveSender(runtimeMeta);
             const row = {
               id: buildEventId(event, ctx),
               created_at: new Date().toISOString(),
@@ -168,8 +176,8 @@ export function createTokenUsageLedgerPlugin(options = {}) {
               machine_identity: runtimeMeta.machineIdentity,
               platform: actor.platform ?? null,
               channel_name: channelName,
-              platform_user_id: actor.platformUserId,
-              platform_user_display_name: resolvedDisplayName ?? actor.platformUserDisplayName,
+              platform_user_id: actor.platformUserId ?? resolvedSender.senderId ?? null,
+              platform_user_display_name: resolvedSender.senderName ?? actor.platformUserDisplayName,
               platform_tenant_id: actor.platformTenantId,
               platform_conversation_id: actor.platformConversationId,
               platform_message_id: actor.platformMessageId,
@@ -238,7 +246,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           const callSource = classifyCallSource(event, ctx);
           const rawChannelName = actor.channelName ?? null;
           const channelName = normalizeChannelName(rawChannelName) ?? rawChannelName;
-          const resolvedDisplayName = resolveDisplayName(ctx.sessionKey ?? null);
+          const resolvedSender = resolveSender(runtimeMeta);
           const provider = event.provider ?? null;
           const model = event.model ?? null;
           const callMeta = modelCallStarted.get(buildCallKey(event, ctx));
@@ -284,8 +292,8 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             machine_identity: runtimeMeta.machineIdentity,
             platform: actor.platform ?? null,
             channel_name: channelName,
-            platform_user_id: actor.platformUserId,
-            platform_user_display_name: resolvedDisplayName ?? actor.platformUserDisplayName,
+            platform_user_id: actor.platformUserId ?? resolvedSender.senderId ?? null,
+            platform_user_display_name: resolvedSender.senderName ?? actor.platformUserDisplayName,
             platform_tenant_id: actor.platformTenantId,
             platform_conversation_id: actor.platformConversationId,
             platform_message_id: actor.platformMessageId,
@@ -382,6 +390,13 @@ function buildRunKey(event = {}, ctx = {}) {
   return typeof id === "string" && id.trim() ? id : null;
 }
 
+function senderCacheKeys({ sessionKey, runId } = {}) {
+  return [
+    typeof runId === "string" && runId.trim() ? `run:${runId}` : null,
+    typeof sessionKey === "string" && sessionKey.trim() ? `session:${sessionKey}` : null
+  ].filter(Boolean);
+}
+
 function buildMetadataJson(event = {}, ctx = {}, extra = {}) {
   return JSON.stringify({
     eventKeys: Object.keys(event ?? {}),
@@ -392,7 +407,8 @@ function buildMetadataJson(event = {}, ctx = {}, extra = {}) {
 
 function extractRuntimeMetadata(event = {}, ctx = {}) {
   // ctx owns all execution-context identity fields; event owns call-specific fields.
-  const agentId = ctx.agentId ?? parseAgentNameFromSessionKey(ctx.sessionKey);
+  const sessionKey = ctx.sessionKey ?? event.sessionKey ?? null;
+  const agentId = ctx.agentId ?? event.agentId ?? parseAgentNameFromSessionKey(sessionKey);
 
   return {
     agentId,
@@ -400,9 +416,9 @@ function extractRuntimeMetadata(event = {}, ctx = {}) {
     runtimeId:       ctx.runtimeId       ?? null,
     machineIdentity: ctx.machineIdentity  ?? null,
     gatewayProfile:  ctx.gatewayProfile   ?? null,
-    sessionKey:      ctx.sessionKey       ?? null,
-    sessionId:       ctx.sessionId        ?? null,
-    runId:           ctx.runId            ?? null,
+    sessionKey,
+    sessionId:       ctx.sessionId        ?? event.sessionId ?? null,
+    runId:           ctx.runId            ?? event.runId ?? null,
     requestId:       event.callId         ?? null
   };
 }
