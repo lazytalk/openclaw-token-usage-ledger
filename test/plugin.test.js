@@ -76,21 +76,61 @@ test("records a TUI model call with agent and source metadata", async () => {
   const row = recordedRows[0];
 
   assert.equal(row.agent_id, "main");
-  assert.equal(row.platform, "openclaw");
-  assert.equal(row.channel_name, "tui");
+  assert.equal(row.platform, null);
+  assert.equal(row.channel_name, null);
   assert.equal(row.call_source, "tui");
   assert.equal(row.input_tokens, 41);
   assert.equal(row.output_tokens, 2);
   assert.equal(row.total_tokens, 43);
   assert.equal(row.provider, "bailian-token-plan");
   assert.equal(row.model, "deepseek-v4-flash");
+  assert.equal(row.agent_name, "main");
+  assert.equal(row.runtime_id, "tui-123");
   assert.equal(row.gateway_profile, "dev-gateway");
   assert.equal(row.machine_identity, "machine-01");
   assert.equal(row.session_key, "agent:main:tui-123");
+  assert.equal(row.request_id, "call-1");
   assert.equal(row.raw_usage_json, JSON.stringify({ input: 41, output: 2, total: 43 }));
 });
 
-test("canonicalizes channel aliases like openclaw-weixin to wechat", async () => {  const handlers = {};
+test("derives agent_name from sessionKey when hook payload omits agent fields", async () => {
+  const handlers = {};
+  const recordedRows = [];
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent(row) { recordedRows.push(row); }
+      };
+    }
+  });
+
+  plugin.register({
+    pluginConfig: { dbPath: ":memory:" },
+    registerHook(name, handler) { handlers[name] = handler; },
+    logger: { warn() {} }
+  });
+
+  await handlers.llm_output(
+    {
+      callId: "call-fallback-1",
+      usage: { input: 8, output: 2, total: 10 },
+      provider: "openai",
+      model: "gpt-4.1"
+    },
+    {
+      sessionKey: "agent:planner:tui-456"
+    }
+  );
+
+  assert.equal(recordedRows.length, 1);
+  const row = recordedRows[0];
+  assert.equal(row.agent_id, "planner");
+  assert.equal(row.agent_name, "planner");
+  assert.equal(row.request_id, "call-fallback-1");
+});
+
+test("canonicalizes explicit event channelName aliases like openclaw-weixin to wechat", async () => {  const handlers = {};
   const recordedRows = [];
   const plugin = createTokenUsageLedgerPlugin({
     createDb() {
@@ -113,7 +153,6 @@ test("canonicalizes channel aliases like openclaw-weixin to wechat", async () =>
 
   const context = {
     sessionKey: "agent:main:wx-123",
-    messageProvider: "openclaw-weixin",
     provider: "kwevllm",
     model: "qwen"
   };
@@ -121,6 +160,7 @@ test("canonicalizes channel aliases like openclaw-weixin to wechat", async () =>
   await handlers.llm_output(
     {
       callId: "call-2",
+      channelName: "openclaw-weixin",
       usage: { input: 10, output: 2, total: 12 }
     },
     context
@@ -166,7 +206,11 @@ test("resolves display name from message_received metadata senderName", async ()
   );
 
   await handlers.llm_output(
-    { usage: { input: 5, output: 2, total: 7 } },
+    {
+      sessionKey: "agent:main:wx-123",
+      channelId: "o9cq80x7h0yhlL0XY7Ivw0Fa3hdU@im.wechat",
+      usage: { input: 5, output: 2, total: 7 }
+    },
     {
       sessionKey: "agent:main:wx-123",
       channelId: "o9cq80x7h0yhlL0XY7Ivw0Fa3hdU@im.wechat",
@@ -180,7 +224,7 @@ test("resolves display name from message_received metadata senderName", async ()
   assert.equal(recordedRows[0].platform_user_display_name, "Henry Wang");
 });
 
-test("derives tool names/count from llm_output lastAssistant content with type and name variants", async () => {
+test("derives tool names/count from strict OpenClaw lastAssistant tool blocks", async () => {
   const handlers = {};
   const recordedRows = [];
   const plugin = createTokenUsageLedgerPlugin({
@@ -205,8 +249,8 @@ test("derives tool names/count from llm_output lastAssistant content with type a
         role: "assistant",
         content: [
           { type: "text", text: "I will inspect the file." },
-          { type: "toolUse", id: "call-1", tool_name: "read", arguments: { path: "README.md" } },
-          { type: "function_call", id: "call-2", function_name: "grep", arguments: { query: "TODO" } }
+          { type: "toolCall", id: "call-1", name: "read", arguments: { path: "README.md" } },
+          { type: "tool_call", id: "call-2", toolName: "grep", arguments: { query: "TODO" } }
         ]
       }
     },
@@ -245,7 +289,7 @@ test("merges after_tool_call events into llm_output record for the same run", as
   handlers.after_tool_call(
     {
       runId: "run-merge-1",
-      tool_call: { function_name: "read" }
+      toolName: "read"
     },
     { runId: "run-merge-1" }
   );
@@ -253,7 +297,15 @@ test("merges after_tool_call events into llm_output record for the same run", as
   handlers.after_tool_call(
     {
       runId: "run-merge-1",
-      toolUse: { tool_name: "grep" }
+      toolName: "grep"
+    },
+    { runId: "run-merge-1" }
+  );
+
+  handlers.after_tool_call(
+    {
+      runId: "run-merge-1",
+      toolName: "read_file"
     },
     { runId: "run-merge-1" }
   );
@@ -274,8 +326,50 @@ test("merges after_tool_call events into llm_output record for the same run", as
   assert.equal(recordedRows.length, 1);
   const row = recordedRows[0];
   assert.equal(row.had_tool_calls, 1);
-  assert.equal(row.tool_call_count, 2);
-  assert.equal(row.tool_names_json, JSON.stringify(["read", "grep"]));
+  assert.equal(row.tool_call_count, 3);
+  assert.equal(row.tool_names_json, JSON.stringify(["read", "grep", "read_file"]));
+});
+
+test("extracts toolName from lastAssistant tool blocks", async () => {
+  const handlers = {};
+  const recordedRows = [];
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent(row) { recordedRows.push(row); }
+      };
+    }
+  });
+
+  plugin.register({
+    pluginConfig: { dbPath: ":memory:" },
+    registerHook(name, handler) { handlers[name] = handler; },
+    logger: { warn() {} }
+  });
+
+  await handlers.llm_output(
+    {
+      usage: { input: 12, output: 4, total: 16 },
+      lastAssistant: {
+        role: "assistant",
+        content: [
+          { type: "tool_call", id: "call-1", toolName: "search_web" }
+        ]
+      }
+    },
+    {
+      sessionKey: "agent:main:tui-tool-4",
+      provider: "openai",
+      model: "gpt-5.4"
+    }
+  );
+
+  assert.equal(recordedRows.length, 1);
+  const row = recordedRows[0];
+  assert.equal(row.had_tool_calls, 1);
+  assert.equal(row.tool_call_count, 1);
+  assert.equal(row.tool_names_json, JSON.stringify(["search_web"]));
 });
 
 test("ignores tool metadata outside event.lastAssistant for deterministic extraction", async () => {
@@ -349,6 +443,8 @@ test("mirrors recorded rows to central HTTP ingest when configured", async () =>
   await handlers.llm_output(
     {
       callId: "call-3",
+      gatewayProfile: "central-gateway",
+      machineIdentity: "host-a",
       usage: { input: 12, output: 4, total: 16 },
       provider: "openai",
       model: "gpt-4.1"
@@ -372,6 +468,7 @@ test("mirrors recorded rows to central HTTP ingest when configured", async () =>
   const mirroredBody = JSON.parse(mirroredRequests[0].options.body);
   assert.equal(mirroredBody.gateway_profile, "central-gateway");
   assert.equal(mirroredBody.machine_identity, "host-a");
+  assert.equal(mirroredBody.runtime_id, "tui-222");
   assert.equal(mirroredBody.total_tokens, 16);
 });
 
