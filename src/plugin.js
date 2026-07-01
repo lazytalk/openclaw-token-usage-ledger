@@ -68,9 +68,9 @@ export function createTokenUsageLedgerPlugin(options = {}) {
 
       // Capture senderName from OpenClaw metadata.
       registerHook(api, "message_received", async (event = {}, ctx = {}) => {
-        const sessionKey = event.sessionKey ?? null;
-        const senderName = event.metadata?.senderName;
-        const senderId = event.metadata?.senderId;
+        const sessionKey = event.sessionKey ?? ctx.sessionKey ?? null;
+        const senderName = firstString(event.metadata?.senderName);
+        const senderId = firstString(event.senderId, ctx.senderId, event.metadata?.senderId);
         try {
           const logPath = resolve(homedir(), ".openclaw", "plugins", "token-usage-ledger", "message-received.log");
           mkdirSync(dirname(logPath), { recursive: true });
@@ -169,7 +169,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
               platform: actor.platform ?? null,
               channel_name: channelName,
               platform_user_id: actor.platformUserId,
-              platform_user_display_name: resolvedDisplayName,
+              platform_user_display_name: resolvedDisplayName ?? actor.platformUserDisplayName,
               platform_tenant_id: actor.platformTenantId,
               platform_conversation_id: actor.platformConversationId,
               platform_message_id: actor.platformMessageId,
@@ -285,7 +285,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             platform: actor.platform ?? null,
             channel_name: channelName,
             platform_user_id: actor.platformUserId,
-            platform_user_display_name: resolvedDisplayName,
+            platform_user_display_name: resolvedDisplayName ?? actor.platformUserDisplayName,
             platform_tenant_id: actor.platformTenantId,
             platform_conversation_id: actor.platformConversationId,
             platform_message_id: actor.platformMessageId,

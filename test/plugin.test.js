@@ -224,6 +224,53 @@ test("resolves display name from message_received metadata senderName", async ()
   assert.equal(recordedRows[0].platform_user_display_name, "Henry Wang");
 });
 
+test("caches message_received display name from context sessionKey", async () => {
+  const handlers = {};
+  const recordedRows = [];
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent(row) { recordedRows.push(row); }
+      };
+    }
+  });
+
+  plugin.register({
+    pluginConfig: { dbPath: ":memory:" },
+    registerHook(name, handler) { handlers[name] = handler; },
+    logger: { warn() {} }
+  });
+
+  await handlers.message_received(
+    {
+      metadata: {
+        senderName: "Context Henry",
+        senderId: "ou_5483d4c149c7b1ef00ea7297d41256da"
+      }
+    },
+    {
+      sessionKey: "agent:main:feishu-context-123"
+    }
+  );
+
+  await handlers.llm_output(
+    {
+      usage: { input: 5, output: 2, total: 7 }
+    },
+    {
+      sessionKey: "agent:main:feishu-context-123",
+      channelId: "ou_5483d4c149c7b1ef00ea7297d41256da",
+      provider: "openai",
+      model: "gpt-4.1"
+    }
+  );
+
+  assert.equal(recordedRows.length, 1);
+  assert.equal(recordedRows[0].platform_user_id, "ou_5483d4c149c7b1ef00ea7297d41256da");
+  assert.equal(recordedRows[0].platform_user_display_name, "Context Henry");
+});
+
 test("derives tool names/count from strict OpenClaw lastAssistant tool blocks", async () => {
   const handlers = {};
   const recordedRows = [];
