@@ -130,6 +130,51 @@ test("derives agent_name from sessionKey when hook payload omits agent fields", 
   assert.equal(row.request_id, "call-fallback-1");
 });
 
+test("derives machine identity and duration from run-scoped model start", async () => {
+  const handlers = {};
+  const recordedRows = [];
+  const plugin = createTokenUsageLedgerPlugin({
+    machineIdentity: "host-derived-1",
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent(row) { recordedRows.push(row); }
+      };
+    }
+  });
+
+  plugin.register({
+    pluginConfig: { dbPath: ":memory:" },
+    registerHook(name, handler) { handlers[name] = handler; },
+    logger: { warn() {} }
+  });
+
+  handlers.model_call_started(
+    {
+      runId: "run-timing-1",
+      startedAt: "2026-07-01T00:00:00.000Z"
+    },
+    {}
+  );
+
+  await handlers.llm_output(
+    {
+      runId: "run-timing-1",
+      endedAt: "2026-07-01T00:00:02.250Z",
+      provider: "kwevllm",
+      model: "qwen",
+      usage: { input: 5, output: 2, total: 7 }
+    },
+    {}
+  );
+
+  assert.equal(recordedRows.length, 1);
+  assert.equal(recordedRows[0].machine_identity, "host-derived-1");
+  assert.equal(recordedRows[0].started_at, "2026-07-01T00:00:00.000Z");
+  assert.equal(recordedRows[0].ended_at, "2026-07-01T00:00:02.250Z");
+  assert.equal(recordedRows[0].duration_ms, 2250);
+});
+
 test("canonicalizes explicit event channelName aliases like openclaw-weixin to wechat", async () => {  const handlers = {};
   const recordedRows = [];
   const plugin = createTokenUsageLedgerPlugin({

@@ -1,5 +1,5 @@
 import { appendFileSync, mkdirSync } from "fs";
-import { homedir } from "os";
+import { homedir, hostname } from "os";
 import { resolve, dirname } from "path";
 import { buildEventId, createUsageDb, defaultDbPath } from "./db.js";
 import { normalizeUsage } from "./normalizeUsage.js";
@@ -45,6 +45,7 @@ const defaultConfig = {
 export function createTokenUsageLedgerPlugin(options = {}) {
   const createDb = options.createDb ?? createUsageDb;
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const systemMachineIdentity = firstString(options.machineIdentity, process.env.LEDGER_MACHINE_IDENTITY, process.env.OPENCLAW_MACHINE_IDENTITY, hostname());
   return {
     id: "token-usage-ledger",
     name: "Token Usage Ledger",
@@ -138,10 +139,30 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       });
 
       registerHook(api, "model_call_started", (event = {}, ctx = {}) => {
-        const key = buildCallKey(event, ctx);
+        const startedAt = event.startedAt ?? ctx.startedAt ?? new Date().toISOString();
         claimPendingSender(buildRunKey(event, ctx));
-        modelCallStarted.set(key, new Date().toISOString());
+        cacheCallMeta(event, ctx, {
+          startedAt,
+          durationMs: firstNumber(event.durationMs, ctx.durationMs),
+          timeToFirstTokenMs: extractTimeToFirstTokenMs(event, ctx),
+          upstreamRequestIdHash: event.upstreamRequestIdHash ?? ctx.upstreamRequestIdHash ?? null
+        });
       });
+
+      function cacheCallMeta(event = {}, ctx = {}, meta = {}) {
+        for (const key of callMetaKeys(event, ctx)) {
+          const existing = modelCallStarted.get(key) ?? {};
+          modelCallStarted.set(key, { ...existing, ...dropNullish(meta) });
+        }
+      }
+
+      function resolveCallMeta(event = {}, ctx = {}) {
+        for (const key of callMetaKeys(event, ctx)) {
+          const existing = modelCallStarted.get(key);
+          if (existing) return typeof existing === "string" ? { startedAt: existing } : existing;
+        }
+        return null;
+      }
 
       registerHook(api, "after_tool_call", (event = {}, ctx = {}) => {
         const runKey = buildRunKey(event, ctx);
@@ -162,18 +183,19 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       });
 
       registerHook(api, "model_call_ended", async (event = {}, ctx = {}) => {
-        const key = buildCallKey(event, ctx);
-        const startedAt = modelCallStarted.get(key);
-        const runtimeMeta = extractRuntimeMetadata(event, ctx);
+        const previousMeta = resolveCallMeta(event, ctx);
+        const endedAt = event.endedAt ?? ctx.endedAt ?? new Date().toISOString();
+        const runtimeMeta = extractRuntimeMetadata(event, ctx, { machineIdentity: systemMachineIdentity });
         const callMeta = {
-          startedAt: typeof startedAt === "string" ? startedAt : startedAt?.startedAt,
-          endedAt: new Date().toISOString(),
-          durationMs: event.durationMs ?? null,
+          startedAt: previousMeta?.startedAt ?? event.startedAt ?? ctx.startedAt ?? null,
+          endedAt,
+          durationMs: firstNumber(event.durationMs, ctx.durationMs, previousMeta?.durationMs, durationMsBetween(previousMeta?.startedAt ?? event.startedAt ?? ctx.startedAt, endedAt)),
+          timeToFirstTokenMs: firstNumber(extractTimeToFirstTokenMs(event, ctx), previousMeta?.timeToFirstTokenMs),
           upstreamRequestIdHash: event.upstreamRequestIdHash ?? null,
           outcome: event.outcome ?? null,
           errorCode: event.errorCategory ?? event.failureKind ?? null
         };
-        modelCallStarted.set(key, callMeta);
+        cacheCallMeta(event, ctx, callMeta);
         if (event.outcome === "error") {
           await dbReady;
           const runKey = buildRunKey(event, ctx);
@@ -181,7 +203,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           try {
             const cachedAttribution = resolveSender(runtimeMeta);
             const { event: enrichedEvent, ctx: enrichedCtx } = enrichWithAttribution(event, ctx, cachedAttribution);
-            const enrichedRuntimeMeta = extractRuntimeMetadata(enrichedEvent, enrichedCtx);
+            const enrichedRuntimeMeta = extractRuntimeMetadata(enrichedEvent, enrichedCtx, { machineIdentity: systemMachineIdentity });
             const actor = extractIdentity(enrichedEvent, enrichedCtx);
             const callSource = classifyCallSource(enrichedEvent, enrichedCtx);
             const rawChannelName = actor.channelName ?? null;
@@ -247,7 +269,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       registerHook(api, "llm_output", async (event = {}, ctx = {}) => {
         try {
           await dbReady;
-          const runtimeMeta = extractRuntimeMetadata(event, ctx);
+          const runtimeMeta = extractRuntimeMetadata(event, ctx, { machineIdentity: systemMachineIdentity });
           const rawUsage = event.usage;
           if (!rawUsage) {
             debugLog({
@@ -268,14 +290,14 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           claimPendingSender(runtimeMeta.runId);
           const cachedAttribution = resolveSender(runtimeMeta);
           const { event: enrichedEvent, ctx: enrichedCtx } = enrichWithAttribution(event, ctx, cachedAttribution);
-          const enrichedRuntimeMeta = extractRuntimeMetadata(enrichedEvent, enrichedCtx);
+          const enrichedRuntimeMeta = extractRuntimeMetadata(enrichedEvent, enrichedCtx, { machineIdentity: systemMachineIdentity });
           const actor = extractIdentity(enrichedEvent, enrichedCtx);
           const callSource = classifyCallSource(enrichedEvent, enrichedCtx);
           const rawChannelName = actor.channelName ?? null;
           const channelName = normalizeChannelName(rawChannelName) ?? rawChannelName;
           const provider = event.provider ?? null;
           const model = event.model ?? null;
-          const callMeta = modelCallStarted.get(buildCallKey(event, ctx));
+          const callMeta = resolveCallMeta(event, ctx);
           const runKey = buildRunKey(event, ctx);
           const cost = rawUsage ? calculateCost({
             provider,
@@ -304,13 +326,15 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           const toolNames = toolSummary.toolNames;
           const toolCallCount = toolSummary.toolCallCount;
 
+          const endedAt = event.endedAt ?? callMeta?.endedAt ?? new Date().toISOString();
+          const startedAt = event.startedAt ?? callMeta?.startedAt ?? ctx.startedAt ?? null;
           const row = {
             id: buildEventId(event, ctx),
             created_at: new Date().toISOString(),
-            started_at: event.startedAt ?? callMeta?.startedAt ?? ctx.startedAt ?? null,
-            ended_at: event.endedAt ?? callMeta?.endedAt ?? new Date().toISOString(),
-            duration_ms: event.durationMs ?? callMeta?.durationMs ?? ctx.durationMs ?? null,
-            time_to_first_token_ms: null,
+            started_at: startedAt,
+            ended_at: endedAt,
+            duration_ms: firstNumber(event.durationMs, callMeta?.durationMs, ctx.durationMs, durationMsBetween(startedAt, endedAt)),
+            time_to_first_token_ms: firstNumber(extractTimeToFirstTokenMs(event, ctx), callMeta?.timeToFirstTokenMs),
             gateway_profile: enrichedRuntimeMeta.gatewayProfile,
             agent_id: enrichedRuntimeMeta.agentId,
             agent_name: enrichedRuntimeMeta.agentName,
@@ -380,6 +404,35 @@ function firstString(...values) {
     if (typeof value === "string" && value.trim()) return value;
   }
   return null;
+}
+
+function firstNumber(...values) {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  }
+  return null;
+}
+
+function durationMsBetween(startedAt, endedAt) {
+  if (!startedAt || !endedAt) return null;
+  const start = Date.parse(startedAt);
+  const end = Date.parse(endedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  return end - start;
+}
+
+function extractTimeToFirstTokenMs(event = {}, ctx = {}) {
+  return firstNumber(
+    event.timeToFirstTokenMs,
+    event.time_to_first_token_ms,
+    event.ttftMs,
+    event.firstTokenLatencyMs,
+    ctx.timeToFirstTokenMs,
+    ctx.time_to_first_token_ms,
+    ctx.ttftMs,
+    ctx.firstTokenLatencyMs
+  );
 }
 
 function dropNullish(obj = {}) {
@@ -477,6 +530,13 @@ function buildCallKey(event = {}, ctx = {}) {
   ].map((value) => value ?? "").join("|");
 }
 
+function callMetaKeys(event = {}, ctx = {}) {
+  const keys = [buildCallKey(event, ctx)];
+  const runKey = buildRunKey(event, ctx);
+  if (runKey) keys.push(`run:${runKey}`);
+  return [...new Set(keys.filter(Boolean))];
+}
+
 function buildRunKey(event = {}, ctx = {}) {
   // ctx.runId is the canonical source; event.runId is listed as optional on tool hooks (docs).
   const id = ctx.runId ?? event.runId ?? null;
@@ -523,7 +583,7 @@ function parseSessionKey(sessionKey) {
   };
 }
 
-function extractRuntimeMetadata(event = {}, ctx = {}) {
+function extractRuntimeMetadata(event = {}, ctx = {}, fallback = {}) {
   // ctx owns all execution-context identity fields; event owns call-specific fields.
   const sessionKey = ctx.sessionKey ?? event.sessionKey ?? null;
   const agentId = ctx.agentId ?? event.agentId ?? parseAgentNameFromSessionKey(sessionKey);
@@ -531,9 +591,9 @@ function extractRuntimeMetadata(event = {}, ctx = {}) {
   return {
     agentId,
     agentName:       agentId,
-    runtimeId:       ctx.runtimeId       ?? null,
-    machineIdentity: ctx.machineIdentity  ?? null,
-    gatewayProfile:  ctx.gatewayProfile   ?? null,
+    runtimeId:       ctx.runtimeId       ?? event.runtimeId ?? null,
+    machineIdentity: ctx.machineIdentity  ?? event.machineIdentity ?? fallback.machineIdentity ?? null,
+    gatewayProfile:  ctx.gatewayProfile   ?? event.gatewayProfile ?? null,
     sessionKey,
     sessionId:       ctx.sessionId        ?? event.sessionId ?? null,
     runId:           ctx.runId            ?? event.runId ?? null,
