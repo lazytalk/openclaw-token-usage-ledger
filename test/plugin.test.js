@@ -268,6 +268,50 @@ test("derives tool names/count from strict OpenClaw lastAssistant tool blocks", 
   assert.equal(row.tool_names_json, JSON.stringify(["read", "grep"]));
 });
 
+test("persists ordered tool list with duplicates from lastAssistant blocks", async () => {
+  const handlers = {};
+  const recordedRows = [];
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent(row) { recordedRows.push(row); }
+      };
+    }
+  });
+
+  plugin.register({
+    pluginConfig: { dbPath: ":memory:" },
+    registerHook(name, handler) { handlers[name] = handler; },
+    logger: { warn() {} }
+  });
+
+  await handlers.llm_output(
+    {
+      usage: { input: 18, output: 6, total: 24 },
+      lastAssistant: {
+        role: "assistant",
+        content: [
+          { type: "toolCall", id: "call-1", name: "command1", arguments: {} },
+          { type: "toolCall", id: "call-2", name: "command1", arguments: {} },
+          { type: "tool_call", id: "call-3", toolName: "command2", arguments: {} }
+        ]
+      }
+    },
+    {
+      sessionKey: "agent:main:tui-tool-ordered-1",
+      provider: "openai",
+      model: "gpt-5.4"
+    }
+  );
+
+  assert.equal(recordedRows.length, 1);
+  const row = recordedRows[0];
+  assert.equal(row.had_tool_calls, 1);
+  assert.equal(row.tool_call_count, 3);
+  assert.equal(row.tool_names_json, JSON.stringify(["command1", "command1", "command2"]));
+});
+
 test("merges after_tool_call events into llm_output record for the same run", async () => {
   const handlers = {};
   const recordedRows = [];

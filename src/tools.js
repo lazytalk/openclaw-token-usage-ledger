@@ -20,15 +20,15 @@ export function extractToolSummaryFromAfterToolCall(event = {}) {
 }
 
 export function mergeToolSummaries(primary = {}, secondary = {}) {
-  const names = new Set();
+  const names = [];
   for (const name of primary.toolNames ?? []) {
-    if (typeof name === "string" && name.trim()) names.add(name);
+    if (typeof name === "string" && name.trim()) names.push(name);
   }
   for (const name of secondary.toolNames ?? []) {
-    if (typeof name === "string" && name.trim()) names.add(name);
+    if (typeof name === "string" && name.trim()) names.push(name);
   }
   return {
-    toolNames: [...names],
+    toolNames: names,
     toolCallCount: Number(primary.toolCallCount ?? 0) + Number(secondary.toolCallCount ?? 0)
   };
 }
@@ -40,7 +40,7 @@ function isToolCallBlockType(value) {
 }
 
 function extractToolCallsFromAssistant(assistant) {
-  const names = new Set();
+  const names = [];
   if (!assistant || typeof assistant !== "object") {
     return { callCount: 0, names };
   }
@@ -56,7 +56,7 @@ function extractToolCallsFromAssistant(assistant) {
 
     callCount += 1;
     const name = block.type === "toolCall" ? block.name : block.toolName;
-    if (name) names.add(name);
+    if (typeof name === "string" && name.trim()) names.push(name);
   }
 
   return { callCount, names };
