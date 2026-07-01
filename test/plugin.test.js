@@ -316,6 +316,11 @@ test("caches message_received sender by runId when llm_output context is empty",
   assert.equal(recordedRows.length, 1);
   assert.equal(recordedRows[0].run_id, "run-feishu-1");
   assert.equal(recordedRows[0].session_id, "session-feishu-1");
+  assert.equal(recordedRows[0].session_key, "agent:main:feishu:direct:ou_5483d4c149c7b1ef00ea7297d41256da");
+  assert.equal(recordedRows[0].agent_id, "main");
+  assert.equal(recordedRows[0].platform, "feishu");
+  assert.equal(recordedRows[0].channel_name, "feishu");
+  assert.equal(recordedRows[0].call_source, "user_chat");
   assert.equal(recordedRows[0].platform_user_id, "ou_5483d4c149c7b1ef00ea7297d41256da");
   assert.equal(recordedRows[0].platform_user_display_name, "Ning Ba");
 });
@@ -374,8 +379,63 @@ test("claims pending message_received sender from following tool runId", async (
   assert.equal(recordedRows.length, 1);
   assert.equal(recordedRows[0].run_id, "run-feishu-2");
   assert.equal(recordedRows[0].session_id, "session-feishu-2");
+  assert.equal(recordedRows[0].session_key, "agent:main:feishu:direct:ou_5483d4c149c7b1ef00ea7297d41256da");
+  assert.equal(recordedRows[0].agent_id, "main");
+  assert.equal(recordedRows[0].platform, "feishu");
+  assert.equal(recordedRows[0].channel_name, "feishu");
+  assert.equal(recordedRows[0].call_source, "user_chat");
   assert.equal(recordedRows[0].platform_user_id, "ou_5483d4c149c7b1ef00ea7297d41256da");
   assert.equal(recordedRows[0].platform_user_display_name, "Ning Ba");
+});
+
+test("derives WeChat channel attribution from cached message_received sessionKey", async () => {
+  const handlers = {};
+  const recordedRows = [];
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent(row) { recordedRows.push(row); }
+      };
+    }
+  });
+
+  plugin.register({
+    pluginConfig: { dbPath: ":memory:" },
+    registerHook(name, handler) { handlers[name] = handler; },
+    logger: { warn() {} }
+  });
+
+  await handlers.message_received(
+    {
+      sessionKey: "agent:main:openclaw-weixin:direct:o9cq80x7h0yhlL0XY7Ivw0Fa3hdU@im.wechat",
+      runId: "run-wechat-1",
+      metadata: {
+        senderName: "Henry Wang",
+        senderId: "o9cq80x7h0yhlL0XY7Ivw0Fa3hdU"
+      }
+    },
+    {}
+  );
+
+  await handlers.llm_output(
+    {
+      runId: "run-wechat-1",
+      provider: "kwevllm",
+      model: "qwen",
+      usage: { input: 5, output: 2, total: 7 }
+    },
+    {}
+  );
+
+  assert.equal(recordedRows.length, 1);
+  assert.equal(recordedRows[0].session_key, "agent:main:openclaw-weixin:direct:o9cq80x7h0yhlL0XY7Ivw0Fa3hdU@im.wechat");
+  assert.equal(recordedRows[0].agent_id, "main");
+  assert.equal(recordedRows[0].platform, "wechat");
+  assert.equal(recordedRows[0].channel_name, "wechat");
+  assert.equal(recordedRows[0].call_source, "user_chat");
+  assert.equal(recordedRows[0].platform_user_id, "o9cq80x7h0yhlL0XY7Ivw0Fa3hdU");
+  assert.equal(recordedRows[0].platform_user_display_name, "Henry Wang");
 });
 
 test("derives tool names/count from strict OpenClaw lastAssistant tool blocks", async () => {

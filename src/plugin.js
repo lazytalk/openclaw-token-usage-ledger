@@ -4,7 +4,7 @@ import { resolve, dirname } from "path";
 import { buildEventId, createUsageDb, defaultDbPath } from "./db.js";
 import { normalizeUsage } from "./normalizeUsage.js";
 import { extractIdentity } from "./identity.js";
-import { classifyCallSource } from "./classifySource.js";
+import { classifyCallSource, parseImChannelUserId } from "./classifySource.js";
 import { calculateCost } from "./cost.js";
 import { normalizeChannelName } from "./normalizeChannel.js";
 import { createMirrorManager } from "./mirror.js";
@@ -61,7 +61,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       });
       const modelCallStarted = new Map();
       const toolCallsByRun = new Map();
-      // Cache sender names from message_received metadata.
+      // Cache attribution from message_received metadata.
       // Keyed by sessionKey and runId so model hooks with empty ctx can still be attributed.
       const senderCache = new Map();
       let pendingSender = null;
@@ -71,8 +71,9 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       registerHook(api, "message_received", async (event = {}, ctx = {}) => {
         const sessionKey = event.sessionKey ?? ctx.sessionKey ?? null;
         const runId = event.runId ?? ctx.runId ?? null;
-        const senderName = firstString(event.metadata?.senderName);
-        const senderId = firstString(event.senderId, ctx.senderId, event.metadata?.senderId);
+        const attribution = buildMessageAttribution(event, ctx);
+        const senderName = attribution.senderName;
+        const senderId = attribution.senderId;
         try {
           const logPath = resolve(homedir(), ".openclaw", "plugins", "token-usage-ledger", "message-received.log");
           mkdirSync(dirname(logPath), { recursive: true });
@@ -88,20 +89,23 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           }) + "\n");
         } catch(e) { /* silent */ }
         if (senderName || senderId) {
-          cacheSender({ sessionKey, runId, senderId, senderName });
-          if (!firstString(runId)) pendingSender = { sessionKey, senderId, senderName, cachedAt: Date.now() };
+          cacheSender(attribution);
+          if (!firstString(runId)) pendingSender = { ...attribution, cachedAt: Date.now() };
           debugLog({ event: "message_received_cache", sessionKey, runId, senderId, senderName });
         } else {
           pendingSender = null;
         }
       });
 
-      function cacheSender({ sessionKey, runId, senderId, senderName }) {
+      function cacheSender(attribution = {}) {
+        const { sessionKey, runId } = attribution;
         for (const key of senderCacheKeys({ sessionKey, runId })) {
           const existing = senderCache.get(key) ?? {};
           senderCache.set(key, {
-            senderId: senderId ?? existing.senderId ?? null,
-            senderName: senderName ?? existing.senderName ?? null
+            ...existing,
+            ...dropNullish(attribution),
+            senderId: attribution.senderId ?? existing.senderId ?? null,
+            senderName: attribution.senderName ?? existing.senderName ?? null
           });
         }
       }
@@ -175,35 +179,37 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           const runKey = buildRunKey(event, ctx);
           if (runKey) toolCallsByRun.delete(runKey);
           try {
-            const actor = extractIdentity(event, ctx);
-            const callSource = classifyCallSource(event, ctx);
+            const cachedAttribution = resolveSender(runtimeMeta);
+            const { event: enrichedEvent, ctx: enrichedCtx } = enrichWithAttribution(event, ctx, cachedAttribution);
+            const enrichedRuntimeMeta = extractRuntimeMetadata(enrichedEvent, enrichedCtx);
+            const actor = extractIdentity(enrichedEvent, enrichedCtx);
+            const callSource = classifyCallSource(enrichedEvent, enrichedCtx);
             const rawChannelName = actor.channelName ?? null;
             const channelName = normalizeChannelName(rawChannelName) ?? rawChannelName;
-            const resolvedSender = resolveSender(runtimeMeta);
             const row = {
               id: buildEventId(event, ctx),
               created_at: new Date().toISOString(),
               started_at: callMeta.startedAt ?? null,
               ended_at: callMeta.endedAt,
               duration_ms: callMeta.durationMs,
-              gateway_profile: runtimeMeta.gatewayProfile,
-              agent_id: runtimeMeta.agentId,
-              agent_name: runtimeMeta.agentName,
-              runtime_id: runtimeMeta.runtimeId,
-              machine_identity: runtimeMeta.machineIdentity,
+              gateway_profile: enrichedRuntimeMeta.gatewayProfile,
+              agent_id: enrichedRuntimeMeta.agentId,
+              agent_name: enrichedRuntimeMeta.agentName,
+              runtime_id: enrichedRuntimeMeta.runtimeId,
+              machine_identity: enrichedRuntimeMeta.machineIdentity,
               platform: actor.platform ?? null,
               channel_name: channelName,
-              platform_user_id: actor.platformUserId ?? resolvedSender.senderId ?? null,
-              platform_user_display_name: resolvedSender.senderName ?? actor.platformUserDisplayName,
+              platform_user_id: actor.platformUserId ?? cachedAttribution.senderId ?? null,
+              platform_user_display_name: cachedAttribution.senderName ?? actor.platformUserDisplayName,
               platform_tenant_id: actor.platformTenantId,
               platform_conversation_id: actor.platformConversationId,
               platform_message_id: actor.platformMessageId,
               thread_id: actor.threadId,
-              session_key: runtimeMeta.sessionKey,
-              session_id: runtimeMeta.sessionId,
-              run_id: runtimeMeta.runId,
+              session_key: enrichedRuntimeMeta.sessionKey,
+              session_id: enrichedRuntimeMeta.sessionId,
+              run_id: enrichedRuntimeMeta.runId,
               turn_id: null,
-              request_id: runtimeMeta.requestId,
+              request_id: enrichedRuntimeMeta.requestId,
               provider_request_id: event.upstreamRequestIdHash ?? null,
               call_source: callSource,
               provider: event.provider ?? null,
@@ -259,13 +265,14 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             inputTokens: 0, outputTokens: 0, totalTokens: 0,
             cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0
           };
-          const actor = extractIdentity(event, ctx);
-          const callSource = classifyCallSource(event, ctx);
+          claimPendingSender(runtimeMeta.runId);
+          const cachedAttribution = resolveSender(runtimeMeta);
+          const { event: enrichedEvent, ctx: enrichedCtx } = enrichWithAttribution(event, ctx, cachedAttribution);
+          const enrichedRuntimeMeta = extractRuntimeMetadata(enrichedEvent, enrichedCtx);
+          const actor = extractIdentity(enrichedEvent, enrichedCtx);
+          const callSource = classifyCallSource(enrichedEvent, enrichedCtx);
           const rawChannelName = actor.channelName ?? null;
           const channelName = normalizeChannelName(rawChannelName) ?? rawChannelName;
-          claimPendingSender(runtimeMeta.runId);
-          claimPendingSender(runtimeMeta.runId);
-          const resolvedSender = resolveSender(runtimeMeta);
           const provider = event.provider ?? null;
           const model = event.model ?? null;
           const callMeta = modelCallStarted.get(buildCallKey(event, ctx));
@@ -304,24 +311,24 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             ended_at: event.endedAt ?? callMeta?.endedAt ?? new Date().toISOString(),
             duration_ms: event.durationMs ?? callMeta?.durationMs ?? ctx.durationMs ?? null,
             time_to_first_token_ms: null,
-            gateway_profile: runtimeMeta.gatewayProfile,
-            agent_id: runtimeMeta.agentId,
-            agent_name: runtimeMeta.agentName,
-            runtime_id: runtimeMeta.runtimeId,
-            machine_identity: runtimeMeta.machineIdentity,
+            gateway_profile: enrichedRuntimeMeta.gatewayProfile,
+            agent_id: enrichedRuntimeMeta.agentId,
+            agent_name: enrichedRuntimeMeta.agentName,
+            runtime_id: enrichedRuntimeMeta.runtimeId,
+            machine_identity: enrichedRuntimeMeta.machineIdentity,
             platform: actor.platform ?? null,
             channel_name: channelName,
-            platform_user_id: actor.platformUserId ?? resolvedSender.senderId ?? null,
-            platform_user_display_name: resolvedSender.senderName ?? actor.platformUserDisplayName,
+            platform_user_id: actor.platformUserId ?? cachedAttribution.senderId ?? null,
+            platform_user_display_name: cachedAttribution.senderName ?? actor.platformUserDisplayName,
             platform_tenant_id: actor.platformTenantId,
             platform_conversation_id: actor.platformConversationId,
             platform_message_id: actor.platformMessageId,
             thread_id: actor.threadId,
-            session_key: runtimeMeta.sessionKey,
-            session_id: runtimeMeta.sessionId,
-            run_id: runtimeMeta.runId,
+            session_key: enrichedRuntimeMeta.sessionKey,
+            session_id: enrichedRuntimeMeta.sessionId,
+            run_id: enrichedRuntimeMeta.runId,
             turn_id: null,
-            request_id: runtimeMeta.requestId,
+            request_id: enrichedRuntimeMeta.requestId,
             provider_request_id: callMeta?.upstreamRequestIdHash ?? null,
             call_source: callSource,
             provider,
@@ -374,6 +381,52 @@ function firstString(...values) {
   return null;
 }
 
+function dropNullish(obj = {}) {
+  return Object.fromEntries(Object.entries(obj).filter(([, value]) => value !== null && value !== undefined));
+}
+
+function buildMessageAttribution(event = {}, ctx = {}) {
+  const metadata = event.metadata && typeof event.metadata === "object" ? event.metadata : {};
+  const sessionKey = firstString(event.sessionKey, ctx.sessionKey);
+  const runId = firstString(event.runId, ctx.runId);
+  const parsed = parseSessionKey(sessionKey);
+  const senderId = firstString(event.senderId, ctx.senderId, metadata.senderId, parsed.platformUserId);
+
+  return {
+    sessionKey,
+    runId,
+    senderId,
+    senderName: firstString(metadata.senderName, event.senderName, ctx.senderName),
+    agentId: firstString(event.agentId, ctx.agentId, parsed.agentId),
+    channelId: firstString(event.channelId, ctx.channelId, metadata.channelId, parsed.channelId),
+    channelName: firstString(event.channelName, ctx.channelName, metadata.channelName, parsed.channelName),
+    messageProvider: firstString(event.messageProvider, ctx.messageProvider, metadata.messageProvider, parsed.messageProvider),
+    platform: firstString(event.platform, ctx.platform, metadata.platform, parsed.platform),
+    platformUserId: senderId,
+    platformConversationId: firstString(event.platformConversationId, ctx.platformConversationId, metadata.platformConversationId, parsed.platformConversationId)
+  };
+}
+
+function enrichWithAttribution(event = {}, ctx = {}, attribution = {}) {
+  const fallback = dropNullish({
+    sessionKey: attribution.sessionKey,
+    runId: attribution.runId,
+    agentId: attribution.agentId,
+    channelId: attribution.channelId,
+    channelName: attribution.channelName,
+    messageProvider: attribution.messageProvider,
+    platform: attribution.platform,
+    platformUserId: attribution.platformUserId ?? attribution.senderId,
+    platformUserDisplayName: attribution.senderName,
+    platformConversationId: attribution.platformConversationId
+  });
+
+  return {
+    event: { ...fallback, ...event },
+    ctx: { ...fallback, ...ctx }
+  };
+}
+
 function registerHook(api, hookName, handler) {
   if (typeof api.on === "function") {
     // New SDK: api.on passes a single event object; context is at event.context.
@@ -422,6 +475,30 @@ function buildMetadataJson(event = {}, ctx = {}, extra = {}) {
     contextKeys: Object.keys(ctx ?? {}),
     ...extra
   });
+}
+
+function parseSessionKey(sessionKey) {
+  if (typeof sessionKey !== "string") return {};
+  const parts = sessionKey.trim().split(":");
+  if (parts[0] !== "agent" || parts.length < 3) return {};
+
+  const agentId = parts[1] || null;
+  const channelName = parts[2] || null;
+  const channelKind = parts[3] || null;
+  const channelId = parts.slice(4).join(":") || null;
+  const isChatSession = Boolean(channelId || channelKind === "direct" || channelKind === "group");
+  const platform = isChatSession ? normalizeChannelName(channelName) ?? channelName : null;
+  const directUserId = channelKind === "direct" ? parseImChannelUserId(channelId) ?? channelId : null;
+
+  return {
+    agentId,
+    channelName: isChatSession ? channelName : null,
+    messageProvider: platform,
+    platform,
+    channelId,
+    platformUserId: directUserId,
+    platformConversationId: channelKind === "group" ? channelId : null
+  };
 }
 
 function extractRuntimeMetadata(event = {}, ctx = {}) {
