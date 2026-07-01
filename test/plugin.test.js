@@ -494,6 +494,67 @@ test("caches TUI message_received session attribution without sender identity", 
   assert.equal(recordedRows[0].call_source, "tui");
 });
 
+test("caches message_received message and thread ids for empty llm_output context", async () => {
+  const handlers = {};
+  const recordedRows = [];
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent(row) { recordedRows.push(row); }
+      };
+    }
+  });
+
+  plugin.register({
+    pluginConfig: { dbPath: ":memory:" },
+    registerHook(name, handler) { handlers[name] = handler; },
+    logger: { warn() {} }
+  });
+
+  await handlers.message_received(
+    {
+      sessionKey: "agent:main:feishu:direct:ou_5483d4c149c7b1ef00ea7297d41256da",
+      runId: null,
+      senderId: "ou_5483d4c149c7b1ef00ea7297d41256da",
+      threadId: "thread-feishu-1",
+      messageId: "msg-feishu-1",
+      metadata: {
+        senderName: "Ning Ba",
+        senderId: "ou_5483d4c149c7b1ef00ea7297d41256da",
+        threadId: "thread-feishu-1",
+        messageId: "msg-feishu-1"
+      }
+    },
+    {}
+  );
+
+  handlers.model_call_started(
+    {
+      runId: "run-feishu-message-1"
+    },
+    {}
+  );
+
+  await handlers.llm_output(
+    {
+      runId: "run-feishu-message-1",
+      sessionId: "session-feishu-message-1",
+      resolvedRef: "resolved-ref-1",
+      provider: "kwevllm",
+      model: "qwen",
+      usage: { input: 5, output: 2, total: 7 }
+    },
+    {}
+  );
+
+  assert.equal(recordedRows.length, 1);
+  assert.equal(recordedRows[0].platform_conversation_id, "thread-feishu-1");
+  assert.equal(recordedRows[0].platform_message_id, "msg-feishu-1");
+  assert.equal(recordedRows[0].thread_id, "thread-feishu-1");
+  assert.equal(recordedRows[0].request_id, "resolved-ref-1");
+});
+
 test("derives tool names/count from strict OpenClaw lastAssistant tool blocks", async () => {
   const handlers = {};
   const recordedRows = [];

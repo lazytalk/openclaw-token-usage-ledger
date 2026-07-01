@@ -418,7 +418,10 @@ function buildMessageAttribution(event = {}, ctx = {}) {
     messageProvider: firstString(event.messageProvider, ctx.messageProvider, metadata.messageProvider, parsed.messageProvider),
     platform: firstString(event.platform, ctx.platform, metadata.platform, parsed.platform),
     platformUserId: senderId,
-    platformConversationId: firstString(event.platformConversationId, ctx.platformConversationId, metadata.platformConversationId, parsed.platformConversationId)
+    platformTenantId: firstString(event.platformTenantId, ctx.platformTenantId, metadata.platformTenantId, event.tenantId, ctx.tenantId, metadata.tenantId),
+    platformConversationId: firstString(event.platformConversationId, ctx.platformConversationId, metadata.platformConversationId, event.threadId, ctx.threadId, metadata.threadId, metadata.originatingTo, parsed.platformConversationId),
+    platformMessageId: firstString(event.platformMessageId, ctx.platformMessageId, event.messageId, ctx.messageId, metadata.messageId),
+    threadId: firstString(event.threadId, ctx.threadId, metadata.threadId)
   };
 }
 
@@ -433,7 +436,10 @@ function enrichWithAttribution(event = {}, ctx = {}, attribution = {}) {
     platform: attribution.platform,
     platformUserId: attribution.platformUserId ?? attribution.senderId,
     platformUserDisplayName: attribution.senderName,
-    platformConversationId: attribution.platformConversationId
+    platformTenantId: attribution.platformTenantId,
+    platformConversationId: attribution.platformConversationId,
+    platformMessageId: attribution.platformMessageId,
+    threadId: attribution.threadId
   });
 
   return {
@@ -531,7 +537,7 @@ function extractRuntimeMetadata(event = {}, ctx = {}) {
     sessionKey,
     sessionId:       ctx.sessionId        ?? event.sessionId ?? null,
     runId:           ctx.runId            ?? event.runId ?? null,
-    requestId:       event.callId         ?? null
+    requestId:       event.callId         ?? event.requestId ?? event.resolvedRef ?? event.harnessId ?? event.runId ?? null
   };
 }
 
