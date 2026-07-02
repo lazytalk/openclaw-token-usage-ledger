@@ -1,6 +1,6 @@
 {
   "name": "token-usage-ledger",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "description": "Durable SQLite token usage ledger and report command for OpenClaw.",
   "type": "module",
   "main": "src/index.js",
