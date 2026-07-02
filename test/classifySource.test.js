@@ -12,6 +12,13 @@ test("classifies TUI calls from runtime id", () => {
   assert.equal(source, "tui");
 });
 
+test("classifies cron runs from sessionKey", () => {
+  const source = classifyCallSource({}, {
+    sessionKey: "agent:main:cron:c572da17-fafd-40a6-823e-a7313a6ea372:run:cc91c5f8-c2ba-4196-b136-f9b355402153"
+  });
+  assert.equal(source, "cron_job");
+});
+
 test("classifies WeChat calls from @im.wechat channelId as user chat source", () => {
   const source = classifyCallSource({}, { channelId: "o9cq80x7h0yhlL0XY7Ivw0Fa3hdU@im.wechat" });
   assert.equal(source, "user_chat");

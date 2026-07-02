@@ -73,6 +73,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       });
       const modelCallStarted = new Map();
       const toolCallsByRun = new Map();
+      const runHintCache = new Map();
       // Cache attribution from message_received metadata.
       // Keyed by sessionKey and runId so model hooks with empty ctx can still be attributed.
       const senderCache = new Map();
@@ -82,6 +83,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
 
       // Capture senderName from OpenClaw metadata.
       registerHook(api, "message_received", async (event = {}, ctx = {}) => {
+        cacheRunHints(event, ctx);
         const sessionKey = event.sessionKey ?? ctx.sessionKey ?? null;
         const runId = event.runId ?? ctx.runId ?? null;
         const attribution = buildMessageAttribution(event, ctx);
@@ -142,6 +144,47 @@ export function createTokenUsageLedgerPlugin(options = {}) {
         pendingSender = null;
       }
 
+      function cacheRunHints(event = {}, ctx = {}) {
+        const runId = buildRunKey(event, ctx);
+        if (!runId) return;
+        const existing = runHintCache.get(runId) ?? {};
+        const parsedSession = parseSessionKey(firstString(event.sessionKey, ctx.sessionKey));
+        runHintCache.set(runId, {
+          ...existing,
+          ...dropNullish({
+            runId,
+            sessionKey: firstString(event.sessionKey, ctx.sessionKey),
+            sessionId: firstString(event.sessionId, ctx.sessionId),
+            agentId: firstString(event.agentId, ctx.agentId, parsedSession.agentId),
+            channelId: firstString(event.channelId, ctx.channelId, parsedSession.channelId),
+            channelName: firstString(event.channelName, ctx.channelName, parsedSession.channelName),
+            messageProvider: firstString(event.messageProvider, ctx.messageProvider, parsedSession.messageProvider),
+            platform: firstString(event.platform, ctx.platform, parsedSession.platform),
+            platformUserId: firstString(event.platformUserId, ctx.platformUserId, parsedSession.platformUserId),
+            platformConversationId: firstString(event.platformConversationId, ctx.platformConversationId, parsedSession.platformConversationId),
+            platformMessageId: firstString(event.platformMessageId, ctx.platformMessageId, event.messageId, ctx.messageId),
+            threadId: firstString(event.threadId, ctx.threadId),
+            runtimeId: firstString(event.runtimeId, ctx.runtimeId),
+            gatewayProfile: firstString(event.gatewayProfile, ctx.gatewayProfile),
+            machineIdentity: firstString(event.machineIdentity, ctx.machineIdentity),
+            heartbeat: firstBoolean(event.heartbeat, ctx.heartbeat),
+            compaction: firstBoolean(event.compaction, ctx.compaction),
+            cron: firstBoolean(event.cron, ctx.cron)
+          })
+        });
+      }
+
+      function resolveRunHints(event = {}, ctx = {}) {
+        const runId = buildRunKey(event, ctx);
+        if (!runId) return {};
+        return runHintCache.get(runId) ?? {};
+      }
+
+      function clearRunHints(event = {}, ctx = {}) {
+        const runId = buildRunKey(event, ctx);
+        if (runId) runHintCache.delete(runId);
+      }
+
       const { enqueueMirror } = createMirrorManager({
         mirrorConfig: config.mirror,
         db,
@@ -151,6 +194,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       });
 
       registerHook(api, "model_call_started", (event = {}, ctx = {}) => {
+        cacheRunHints(event, ctx);
         const startedAt = event.startedAt ?? ctx.startedAt ?? new Date().toISOString();
         claimPendingSender(buildRunKey(event, ctx));
         cacheCallMeta(event, ctx, {
@@ -177,6 +221,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       }
 
       registerHook(api, "after_tool_call", (event = {}, ctx = {}) => {
+        cacheRunHints(event, ctx);
         const runKey = buildRunKey(event, ctx);
         const summary = extractToolSummaryFromAfterToolCall(event, ctx);
         claimPendingSender(runKey);
@@ -195,6 +240,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       }, captureHookPayload);
 
       registerHook(api, "model_call_ended", async (event = {}, ctx = {}) => {
+        cacheRunHints(event, ctx);
         const previousMeta = resolveCallMeta(event, ctx);
         const endedAt = event.endedAt ?? ctx.endedAt ?? new Date().toISOString();
         const runtimeMeta = extractRuntimeMetadata(event, ctx, { machineIdentity: systemMachineIdentity });
@@ -211,10 +257,17 @@ export function createTokenUsageLedgerPlugin(options = {}) {
         if (event.outcome === "error") {
           await dbReady;
           const runKey = buildRunKey(event, ctx);
-          if (runKey) toolCallsByRun.delete(runKey);
+          if (runKey) {
+            toolCallsByRun.delete(runKey);
+            clearRunHints(event, ctx);
+          }
           try {
             const cachedAttribution = resolveSender(runtimeMeta);
-            const { event: enrichedEvent, ctx: enrichedCtx } = enrichWithAttribution(event, ctx, cachedAttribution);
+            const runHints = resolveRunHints(event, ctx);
+            const { event: enrichedEvent, ctx: enrichedCtx } = enrichWithAttribution(event, ctx, {
+              ...runHints,
+              ...cachedAttribution
+            });
             const enrichedRuntimeMeta = extractRuntimeMetadata(enrichedEvent, enrichedCtx, { machineIdentity: systemMachineIdentity });
             const actor = extractIdentity(enrichedEvent, enrichedCtx);
             const callSource = classifyCallSource(enrichedEvent, enrichedCtx);
@@ -280,6 +333,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
 
       registerHook(api, "llm_output", async (event = {}, ctx = {}) => {
         try {
+          cacheRunHints(event, ctx);
           await dbReady;
           const runtimeMeta = extractRuntimeMetadata(event, ctx, { machineIdentity: systemMachineIdentity });
           const rawUsage = event.usage;
@@ -301,7 +355,11 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           };
           claimPendingSender(runtimeMeta.runId);
           const cachedAttribution = resolveSender(runtimeMeta);
-          const { event: enrichedEvent, ctx: enrichedCtx } = enrichWithAttribution(event, ctx, cachedAttribution);
+          const runHints = resolveRunHints(event, ctx);
+          const { event: enrichedEvent, ctx: enrichedCtx } = enrichWithAttribution(event, ctx, {
+            ...runHints,
+            ...cachedAttribution
+          });
           const enrichedRuntimeMeta = extractRuntimeMetadata(enrichedEvent, enrichedCtx, { machineIdentity: systemMachineIdentity });
           const actor = extractIdentity(enrichedEvent, enrichedCtx);
           const callSource = classifyCallSource(enrichedEvent, enrichedCtx);
@@ -334,7 +392,10 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             eventKeys: Object.keys(event),
             contextKeys: Object.keys(ctx)
           });
-          if (runKey) toolCallsByRun.delete(runKey);
+          if (runKey) {
+            toolCallsByRun.delete(runKey);
+            clearRunHints(event, ctx);
+          }
           const toolNames = toolSummary.toolNames;
           const toolCallCount = toolSummary.toolCallCount;
 
@@ -422,6 +483,13 @@ function firstNumber(...values) {
   for (const value of values) {
     if (typeof value === "number" && Number.isFinite(value)) return value;
     if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  }
+  return null;
+}
+
+function firstBoolean(...values) {
+  for (const value of values) {
+    if (typeof value === "boolean") return value;
   }
   return null;
 }

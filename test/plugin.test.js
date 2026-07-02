@@ -599,6 +599,52 @@ test("caches TUI message_received session attribution without sender identity", 
   assert.equal(recordedRows[0].call_source, "tui");
 });
 
+test("recovers cron call source from run-scoped model_call_started hints", async () => {
+  const handlers = {};
+  const recordedRows = [];
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent(row) { recordedRows.push(row); }
+      };
+    }
+  });
+
+  plugin.register({
+    pluginConfig: { dbPath: ":memory:" },
+    registerHook(name, handler) { handlers[name] = handler; },
+    logger: { warn() {} }
+  });
+
+  handlers.model_call_started(
+    {
+      runId: "run-cron-1",
+      sessionId: "run-cron-1",
+      sessionKey: "agent:main:cron:c572da17-fafd-40a6-823e-a7313a6ea372:run:run-cron-1",
+      provider: "kwevllm",
+      model: "/models/qwen3.6-35b-a3b-fp8"
+    },
+    {}
+  );
+
+  await handlers.llm_output(
+    {
+      runId: "run-cron-1",
+      sessionId: "run-cron-1",
+      provider: "kwevllm",
+      model: "/models/qwen3.6-35b-a3b-fp8",
+      usage: { input: 9, output: 3, total: 12 }
+    },
+    {}
+  );
+
+  assert.equal(recordedRows.length, 1);
+  assert.equal(recordedRows[0].run_id, "run-cron-1");
+  assert.equal(recordedRows[0].session_key, "agent:main:cron:c572da17-fafd-40a6-823e-a7313a6ea372:run:run-cron-1");
+  assert.equal(recordedRows[0].call_source, "cron_job");
+});
+
 test("caches message_received message and thread ids for empty llm_output context", async () => {
   const handlers = {};
   const recordedRows = [];

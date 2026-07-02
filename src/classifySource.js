@@ -5,8 +5,12 @@ export function classifyCallSource(event = {}, ctx = {}) {
   const messageProvider = ctx.messageProvider ?? event.messageProvider ?? "";
   const hasMessageProvider = typeof messageProvider === "string" && messageProvider.trim();
   const hasImChannel = Boolean(parseImChannelPlatform(channelId) || parseFeishuChannelId(channelId));
+  const sessionSource = parseSessionKeySource(sessionKey);
 
-  if (typeof sessionKey === "string" && sessionKey.includes(":tui-")) return "tui";
+  if (sessionSource === "tui") return "tui";
+  if (sessionSource === "cron") return "cron_job";
+  if (sessionSource === "heartbeat") return "heartbeat";
+  if (sessionSource === "compaction") return "compaction";
   if (typeof runtimeId === "string" && runtimeId.startsWith("tui-")) return "tui";
   if (ctx.cronJobId || event.cronJobId || ctx.cron || event.cron) return "cron_job";
   if (ctx.compaction || event.compaction || event.reason === "compaction") return "compaction";
@@ -17,6 +21,16 @@ export function classifyCallSource(event = {}, ctx = {}) {
   if (ctx.manualCommand || event.manualCommand || event.commandName) return "manual_command";
   if (ctx.inboundMessage || event.messageReceived || event.message || ctx.message || hasMessageProvider || hasImChannel) return "user_chat";
   return "unknown";
+}
+
+function parseSessionKeySource(sessionKey = "") {
+  if (typeof sessionKey !== "string") return null;
+  const normalized = sessionKey.toLowerCase();
+  if (normalized.includes(":tui-") || normalized.includes(":tui:")) return "tui";
+  if (normalized.includes(":cron:")) return "cron";
+  if (normalized.includes(":heartbeat:")) return "heartbeat";
+  if (normalized.includes(":compact:") || normalized.includes(":compaction:")) return "compaction";
+  return null;
 }
 
 // channelId format: "{peerId}@im.{platform}" e.g. "abc123@im.wechat"
