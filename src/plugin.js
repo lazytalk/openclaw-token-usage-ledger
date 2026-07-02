@@ -1,15 +1,17 @@
 import { appendFileSync, mkdirSync } from "fs";
-import { homedir } from "os";
+import { homedir, hostname } from "os";
 import { resolve, dirname } from "path";
 import { buildEventId, createUsageDb, defaultDbPath } from "./db.js";
 import { normalizeUsage } from "./normalizeUsage.js";
 import { extractIdentity } from "./identity.js";
-import { classifyCallSource, parseImChannelPlatform, parseFeishuChannelId } from "./classifySource.js";
+import { classifyCallSource, parseImChannelUserId } from "./classifySource.js";
 import { calculateCost } from "./cost.js";
 import { normalizeChannelName } from "./normalizeChannel.js";
+import { createMirrorManager } from "./mirror.js";
+import { extractToolSummary, extractToolSummaryFromAfterToolCall, mergeToolSummaries } from "./tools.js";
 
 // Always write debug log to the plugin data dir; override with LEDGER_DEBUG_LOG env var.
-const _defaultDebugLog = resolve(homedir(), ".openclaw-ops", "plugins", "token-usage-ledger", "debug.jsonl");
+const _defaultDebugLog = resolve(homedir(), ".openclaw", "plugins", "token-usage-ledger", "debug.jsonl");
 const DEBUG_LOG = process.env.LEDGER_DEBUG_LOG ?? _defaultDebugLog;
 function debugLog(obj) {
   try {
@@ -28,11 +30,22 @@ const defaultConfig = {
   localModelsCostMode: "zero",
   debugRawUsage: true,
   pricing: {},
-  userNameMap: {}
+  mirror: {
+    enabled: false,
+    url: null,
+    apiKey: null,
+    timeoutMs: 5000,
+    retryIntervalMs: 15000,
+    retryBaseDelayMs: 2000,
+    retryMaxDelayMs: 300000,
+    maxBatchSize: 50
+  }
 };
 
 export function createTokenUsageLedgerPlugin(options = {}) {
   const createDb = options.createDb ?? createUsageDb;
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const systemMachineIdentity = firstString(options.machineIdentity, process.env.LEDGER_MACHINE_IDENTITY, process.env.OPENCLAW_MACHINE_IDENTITY, hostname());
   return {
     id: "token-usage-ledger",
     name: "Token Usage Ledger",
@@ -40,62 +53,189 @@ export function createTokenUsageLedgerPlugin(options = {}) {
     register(api = {}) {
       const config = { ...defaultConfig, ...(api.pluginConfig ?? api.config ?? {}) };
       const db = createDb(config.dbPath);
+      const dbReady = Promise.resolve()
+        .then(() => db.query("SELECT 1 AS ok"))
+        .catch((error) => {
+        const hint = sqliteBindingTroubleshootingMessage(error);
+        api.logger?.error?.(hint);
+        throw new Error(hint);
+      });
       const modelCallStarted = new Map();
+      const toolCallsByRun = new Map();
+      // Cache attribution from message_received metadata.
+      // Keyed by sessionKey and runId so model hooks with empty ctx can still be attributed.
+      const senderCache = new Map();
+      let pendingSender = null;
       debugLog({ event: "register", dbPath: config.dbPath });
 
-      registerHook(api, "model_call_started", (event = {}, ctx = {}) => {
-        const key = buildCallKey(event, ctx);
-        modelCallStarted.set(key, new Date().toISOString());
+      // Capture senderName from OpenClaw metadata.
+      registerHook(api, "message_received", async (event = {}, ctx = {}) => {
+        const sessionKey = event.sessionKey ?? ctx.sessionKey ?? null;
+        const runId = event.runId ?? ctx.runId ?? null;
+        const attribution = buildMessageAttribution(event, ctx);
+        const senderName = attribution.senderName;
+        const senderId = attribution.senderId;
+        try {
+          const logPath = resolve(homedir(), ".openclaw", "plugins", "token-usage-ledger", "message-received.log");
+          mkdirSync(dirname(logPath), { recursive: true });
+          appendFileSync(logPath, JSON.stringify({
+            ts: new Date().toISOString(),
+            sessionKey,
+            runId,
+            senderName,
+            senderId,
+            eventKeys: Object.keys(event),
+            metadataKeys: event.metadata ? Object.keys(event.metadata) : null,
+            metadataSenderName: event.metadata?.senderName
+          }) + "\n");
+        } catch(e) { /* silent */ }
+        if (hasAttribution(attribution)) {
+          cacheSender(attribution);
+          if (!firstString(runId)) pendingSender = { ...attribution, cachedAt: Date.now() };
+          debugLog({ event: "message_received_cache", sessionKey, runId, senderId, senderName, agentId: attribution.agentId, platform: attribution.platform, channelName: attribution.channelName });
+        } else {
+          pendingSender = null;
+        }
       });
 
-      registerHook(api, "model_call_ended", (event = {}, ctx = {}) => {
-        const key = buildCallKey(event, ctx);
-        const startedAt = modelCallStarted.get(key);
-        const runtimeHints = deriveRuntimeHints(event, ctx);
+      function cacheSender(attribution = {}) {
+        const { sessionKey, runId } = attribution;
+        for (const key of senderCacheKeys({ sessionKey, runId })) {
+          const existing = senderCache.get(key) ?? {};
+          senderCache.set(key, {
+            ...existing,
+            ...dropNullish(attribution),
+            senderId: attribution.senderId ?? existing.senderId ?? null,
+            senderName: attribution.senderName ?? existing.senderName ?? null
+          });
+        }
+      }
+
+      function resolveSender({ sessionKey, runId }) {
+        for (const key of senderCacheKeys({ sessionKey, runId })) {
+          const cached = senderCache.get(key);
+          if (hasAttribution(cached)) return cached;
+        }
+        return {};
+      }
+
+      function claimPendingSender(runId) {
+        if (!firstString(runId) || !pendingSender) return;
+        if (Date.now() - pendingSender.cachedAt > 5 * 60 * 1000) {
+          pendingSender = null;
+          return;
+        }
+        cacheSender({ ...pendingSender, runId });
+        debugLog({ event: "message_received_run_claim", runId, sessionKey: pendingSender.sessionKey, senderId: pendingSender.senderId, senderName: pendingSender.senderName });
+        pendingSender = null;
+      }
+
+      const { enqueueMirror } = createMirrorManager({
+        mirrorConfig: config.mirror,
+        db,
+        fetchImpl,
+        dbReady,
+        debugLog
+      });
+
+      registerHook(api, "model_call_started", (event = {}, ctx = {}) => {
+        const startedAt = event.startedAt ?? ctx.startedAt ?? new Date().toISOString();
+        claimPendingSender(buildRunKey(event, ctx));
+        cacheCallMeta(event, ctx, {
+          startedAt,
+          durationMs: firstNumber(event.durationMs, ctx.durationMs),
+          timeToFirstTokenMs: extractTimeToFirstTokenMs(event, ctx),
+          upstreamRequestIdHash: event.upstreamRequestIdHash ?? ctx.upstreamRequestIdHash ?? null
+        });
+      });
+
+      function cacheCallMeta(event = {}, ctx = {}, meta = {}) {
+        for (const key of callMetaKeys(event, ctx)) {
+          const existing = modelCallStarted.get(key) ?? {};
+          modelCallStarted.set(key, { ...existing, ...dropNullish(meta) });
+        }
+      }
+
+      function resolveCallMeta(event = {}, ctx = {}) {
+        for (const key of callMetaKeys(event, ctx)) {
+          const existing = modelCallStarted.get(key);
+          if (existing) return typeof existing === "string" ? { startedAt: existing } : existing;
+        }
+        return null;
+      }
+
+      registerHook(api, "after_tool_call", (event = {}, ctx = {}) => {
+        const runKey = buildRunKey(event, ctx);
+        const summary = extractToolSummaryFromAfterToolCall(event, ctx);
+        claimPendingSender(runKey);
+        debugLog({
+          event: "after_tool_call",
+          runKey,
+          toolName: event.toolName ?? null,
+          toolCallCount: summary.toolCallCount,
+          eventKeys: Object.keys(event),
+          contextKeys: Object.keys(ctx)
+        });
+        if (!runKey || summary.toolCallCount <= 0) return;
+
+        const existing = toolCallsByRun.get(runKey) ?? { toolCallCount: 0, toolNames: [] };
+        toolCallsByRun.set(runKey, mergeToolSummaries(existing, summary));
+      });
+
+      registerHook(api, "model_call_ended", async (event = {}, ctx = {}) => {
+        const previousMeta = resolveCallMeta(event, ctx);
+        const endedAt = event.endedAt ?? ctx.endedAt ?? new Date().toISOString();
+        const runtimeMeta = extractRuntimeMetadata(event, ctx, { machineIdentity: systemMachineIdentity });
         const callMeta = {
-          startedAt: typeof startedAt === "string" ? startedAt : startedAt?.startedAt,
-          endedAt: new Date().toISOString(),
-          durationMs: event.durationMs ?? null,
+          startedAt: previousMeta?.startedAt ?? event.startedAt ?? ctx.startedAt ?? null,
+          endedAt,
+          durationMs: firstNumber(event.durationMs, ctx.durationMs, previousMeta?.durationMs, durationMsBetween(previousMeta?.startedAt ?? event.startedAt ?? ctx.startedAt, endedAt)),
+          timeToFirstTokenMs: firstNumber(extractTimeToFirstTokenMs(event, ctx), previousMeta?.timeToFirstTokenMs),
           upstreamRequestIdHash: event.upstreamRequestIdHash ?? null,
           outcome: event.outcome ?? null,
           errorCode: event.errorCategory ?? event.failureKind ?? null
         };
-        modelCallStarted.set(key, callMeta);
+        cacheCallMeta(event, ctx, callMeta);
         if (event.outcome === "error") {
+          await dbReady;
+          const runKey = buildRunKey(event, ctx);
+          if (runKey) toolCallsByRun.delete(runKey);
           try {
-            const actor = extractIdentity(event, ctx);
-            const callSource = classifyCallSource(event, ctx);
-            const rawChannelName = actor.channelName ?? runtimeHints.channelName;
+            const cachedAttribution = resolveSender(runtimeMeta);
+            const { event: enrichedEvent, ctx: enrichedCtx } = enrichWithAttribution(event, ctx, cachedAttribution);
+            const enrichedRuntimeMeta = extractRuntimeMetadata(enrichedEvent, enrichedCtx, { machineIdentity: systemMachineIdentity });
+            const actor = extractIdentity(enrichedEvent, enrichedCtx);
+            const callSource = classifyCallSource(enrichedEvent, enrichedCtx);
+            const rawChannelName = actor.channelName ?? null;
             const channelName = normalizeChannelName(rawChannelName) ?? rawChannelName;
-            const resolvedDisplayName = actor.platformUserDisplayName
-              ?? (actor.platformUserId ? (config.userNameMap[actor.platformUserId] ?? null) : null);
-            db.insertUsageEvent({
+            const row = {
               id: buildEventId(event, ctx),
               created_at: new Date().toISOString(),
               started_at: callMeta.startedAt ?? null,
               ended_at: callMeta.endedAt,
               duration_ms: callMeta.durationMs,
-              gateway_profile: ctx.gatewayProfile ?? event.gatewayProfile ?? process.env.OPENCLAW_PROFILE ?? null,
-              agent_id: ctx.agentId ?? event.agentId ?? runtimeHints.agentId ?? null,
-              agent_name: ctx.agentName ?? event.agentName ?? (runtimeHints.agentId ? `agent:${runtimeHints.agentId}` : null),
-              runtime_id: ctx.runtimeId ?? event.runtimeId ?? null,
-              platform: actor.platform ?? runtimeHints.platform,
+              gateway_profile: enrichedRuntimeMeta.gatewayProfile,
+              agent_id: enrichedRuntimeMeta.agentId,
+              agent_name: enrichedRuntimeMeta.agentName,
+              runtime_id: enrichedRuntimeMeta.runtimeId,
+              machine_identity: enrichedRuntimeMeta.machineIdentity,
+              platform: actor.platform ?? null,
               channel_name: channelName,
-              platform_user_id: actor.platformUserId,
-              platform_user_display_name: resolvedDisplayName,
+              platform_user_id: actor.platformUserId ?? cachedAttribution.senderId ?? null,
+              platform_user_display_name: cachedAttribution.senderName ?? actor.platformUserDisplayName,
               platform_tenant_id: actor.platformTenantId,
               platform_conversation_id: actor.platformConversationId,
               platform_message_id: actor.platformMessageId,
               thread_id: actor.threadId,
-              session_key: runtimeHints.sessionKey,
-              session_id: ctx.sessionId ?? event.sessionId ?? null,
-              run_id: ctx.runId ?? event.runId ?? null,
-              turn_id: ctx.turnId ?? event.turnId ?? null,
-              request_id: event.requestIdHash ?? event.requestId ?? event.callId ?? null,
-              provider_request_id: event.providerRequestId ?? event.upstreamRequestIdHash ?? null,
-              call_source: callSource === "unknown" ? runtimeHints.source ?? callSource : callSource,
-              provider: event.provider ?? ctx.provider ?? null,
-              model: event.model ?? ctx.model ?? null,
+              session_key: enrichedRuntimeMeta.sessionKey,
+              session_id: enrichedRuntimeMeta.sessionId,
+              run_id: enrichedRuntimeMeta.runId,
+              turn_id: null,
+              request_id: enrichedRuntimeMeta.requestId,
+              provider_request_id: event.upstreamRequestIdHash ?? null,
+              call_source: callSource,
+              provider: event.provider ?? null,
+              model: event.model ?? null,
               input_tokens: 0,
               output_tokens: 0,
               total_tokens: 0,
@@ -111,13 +251,15 @@ export function createTokenUsageLedgerPlugin(options = {}) {
               status: "error",
               error_code: callMeta.errorCode,
               error_message: event.errorMessage ?? null,
-              retry_count: event.retryCount ?? 0,
+              retry_count: 0,
               raw_usage_json: null,
               metadata_json: buildMetadataJson(event, ctx, {
                 rawChannelName,
                 normalizedChannelName: channelName
               })
-            });
+            };
+            await db.insertUsageEvent(row);
+            await enqueueMirror(row);
           } catch (error) {
             api.logger?.warn?.("token-usage-ledger failed to record failed model call", error);
           }
@@ -126,15 +268,15 @@ export function createTokenUsageLedgerPlugin(options = {}) {
 
       registerHook(api, "llm_output", async (event = {}, ctx = {}) => {
         try {
-          const rawUsage = event.usage ?? event.rawUsage ?? event.response?.usage;
+          await dbReady;
+          const runtimeMeta = extractRuntimeMetadata(event, ctx, { machineIdentity: systemMachineIdentity });
+          const rawUsage = event.usage;
           if (!rawUsage) {
             debugLog({
               event: "llm_output_no_usage",
               usageValue: event.usage,
-              rawUsageValue: event.rawUsage,
-              responseUsageValue: event.response?.usage,
-              provider: event.provider ?? ctx.provider ?? null,
-              model: event.model ?? ctx.model ?? null,
+              provider: event.provider ?? null,
+              model: event.model ?? null,
               channelId: ctx.channelId ?? event.channelId ?? null,
               eventKeys: Object.keys(event ?? {}),
               contextKeys: Object.keys(ctx ?? {})
@@ -145,17 +287,18 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             inputTokens: 0, outputTokens: 0, totalTokens: 0,
             cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0
           };
-          const actor = extractIdentity(event, ctx);
-          const runtimeHints = deriveRuntimeHints(event, ctx);
-          const callSource = classifyCallSource(event, ctx);
-          const rawChannelName = actor.channelName ?? runtimeHints.channelName;
+          claimPendingSender(runtimeMeta.runId);
+          const cachedAttribution = resolveSender(runtimeMeta);
+          const { event: enrichedEvent, ctx: enrichedCtx } = enrichWithAttribution(event, ctx, cachedAttribution);
+          const enrichedRuntimeMeta = extractRuntimeMetadata(enrichedEvent, enrichedCtx, { machineIdentity: systemMachineIdentity });
+          const actor = extractIdentity(enrichedEvent, enrichedCtx);
+          const callSource = classifyCallSource(enrichedEvent, enrichedCtx);
+          const rawChannelName = actor.channelName ?? null;
           const channelName = normalizeChannelName(rawChannelName) ?? rawChannelName;
-          const resolvedCallSource = callSource === "unknown" ? runtimeHints.source ?? callSource : callSource;
-          const resolvedDisplayName = actor.platformUserDisplayName
-            ?? (actor.platformUserId ? (config.userNameMap[actor.platformUserId] ?? null) : null);
-          const provider = event.provider ?? ctx.provider ?? null;
-          const model = event.model ?? ctx.model ?? null;
-          const callMeta = modelCallStarted.get(buildCallKey(event, ctx));
+          const provider = event.provider ?? null;
+          const model = event.model ?? null;
+          const callMeta = resolveCallMeta(event, ctx);
+          const runKey = buildRunKey(event, ctx);
           const cost = rawUsage ? calculateCost({
             provider,
             model,
@@ -163,35 +306,55 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             pricing: config.pricing,
             localModelsCostMode: config.localModelsCostMode
           }) : { estimatedCostUsd: 0, inputCostUsd: 0, outputCostUsd: 0, cacheCostUsd: 0, costMode: "unknown" };
-          const toolNames = event.toolNames ?? ctx.toolNames ?? [];
-          const toolCallCount = Number(ctx.toolCallCount ?? event.toolCallCount ?? toolNames.length ?? 0) || 0;
+          const assistantToolSummary = extractToolSummary(event);
+          const runToolSummary = runKey ? (toolCallsByRun.get(runKey) ?? { toolNames: [], toolCallCount: 0 }) : { toolNames: [], toolCallCount: 0 };
+          const toolSummary = mergeToolSummaries(assistantToolSummary, runToolSummary);
+          debugLog({
+            event: "llm_output_tools",
+            runKey,
+            assistantToolCount: assistantToolSummary.toolCallCount,
+            runToolCount: runToolSummary.toolCallCount,
+            mergedToolCount: toolSummary.toolCallCount,
+            hasLastAssistant: !!event.lastAssistant,
+            lastAssistantContentType: Array.isArray(event.lastAssistant?.content) ? "array" : typeof event.lastAssistant?.content,
+            eventCtxRunId: ctx.runId ?? null,
+            eventRunId: event.runId ?? null,
+            eventKeys: Object.keys(event),
+            contextKeys: Object.keys(ctx)
+          });
+          if (runKey) toolCallsByRun.delete(runKey);
+          const toolNames = toolSummary.toolNames;
+          const toolCallCount = toolSummary.toolCallCount;
 
-          db.insertUsageEvent({
+          const endedAt = event.endedAt ?? callMeta?.endedAt ?? new Date().toISOString();
+          const startedAt = event.startedAt ?? callMeta?.startedAt ?? ctx.startedAt ?? null;
+          const row = {
             id: buildEventId(event, ctx),
             created_at: new Date().toISOString(),
-            started_at: event.startedAt ?? callMeta?.startedAt ?? ctx.startedAt ?? null,
-            ended_at: event.endedAt ?? callMeta?.endedAt ?? new Date().toISOString(),
-            duration_ms: event.durationMs ?? callMeta?.durationMs ?? ctx.durationMs ?? null,
-            time_to_first_token_ms: event.timeToFirstTokenMs ?? event.timeToFirstByteMs ?? null,
-            gateway_profile: ctx.gatewayProfile ?? event.gatewayProfile ?? process.env.OPENCLAW_PROFILE ?? null,
-            agent_id: ctx.agentId ?? event.agentId ?? runtimeHints.agentId ?? null,
-            agent_name: ctx.agentName ?? event.agentName ?? (runtimeHints.agentId ? `agent:${runtimeHints.agentId}` : null),
-            runtime_id: ctx.runtimeId ?? event.runtimeId ?? null,
-            platform: actor.platform ?? runtimeHints.platform,
+            started_at: startedAt,
+            ended_at: endedAt,
+            duration_ms: firstNumber(event.durationMs, callMeta?.durationMs, ctx.durationMs, durationMsBetween(startedAt, endedAt)),
+            time_to_first_token_ms: firstNumber(extractTimeToFirstTokenMs(event, ctx), callMeta?.timeToFirstTokenMs),
+            gateway_profile: enrichedRuntimeMeta.gatewayProfile,
+            agent_id: enrichedRuntimeMeta.agentId,
+            agent_name: enrichedRuntimeMeta.agentName,
+            runtime_id: enrichedRuntimeMeta.runtimeId,
+            machine_identity: enrichedRuntimeMeta.machineIdentity,
+            platform: actor.platform ?? null,
             channel_name: channelName,
-            platform_user_id: actor.platformUserId,
-            platform_user_display_name: resolvedDisplayName,
+            platform_user_id: actor.platformUserId ?? cachedAttribution.senderId ?? null,
+            platform_user_display_name: cachedAttribution.senderName ?? actor.platformUserDisplayName,
             platform_tenant_id: actor.platformTenantId,
             platform_conversation_id: actor.platformConversationId,
             platform_message_id: actor.platformMessageId,
             thread_id: actor.threadId,
-            session_key: runtimeHints.sessionKey,
-            session_id: ctx.sessionId ?? event.sessionId ?? null,
-            run_id: ctx.runId ?? event.runId ?? null,
-            turn_id: ctx.turnId ?? event.turnId ?? null,
-            request_id: event.requestIdHash ?? event.requestId ?? event.callId ?? null,
-            provider_request_id: event.providerRequestId ?? event.upstreamRequestIdHash ?? callMeta?.upstreamRequestIdHash ?? null,
-            call_source: resolvedCallSource,
+            session_key: enrichedRuntimeMeta.sessionKey,
+            session_id: enrichedRuntimeMeta.sessionId,
+            run_id: enrichedRuntimeMeta.runId,
+            turn_id: null,
+            request_id: enrichedRuntimeMeta.requestId,
+            provider_request_id: callMeta?.upstreamRequestIdHash ?? null,
+            call_source: callSource,
             provider,
             model,
             input_tokens: usage.inputTokens,
@@ -205,16 +368,16 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             output_cost_usd: cost.outputCostUsd,
             cache_cost_usd: cost.cacheCostUsd,
             cost_mode: cost.costMode,
-            context_tokens_before: event.contextTokensBefore ?? null,
-            context_tokens_after: event.contextTokensAfter ?? null,
+            context_tokens_before: null,
+            context_tokens_after: null,
             context_window: event.contextWindow ?? event.contextTokenBudget ?? null,
             had_tool_calls: toolCallCount > 0 ? 1 : 0,
             tool_call_count: toolCallCount,
             tool_names_json: toolNames.length ? JSON.stringify(toolNames) : null,
-            status: rawUsage ? (event.status ?? (callMeta?.outcome === "error" ? "error" : "success")) : "no-usage",
-            error_code: event.errorCode ?? callMeta?.errorCode ?? null,
+            status: rawUsage ? (callMeta?.outcome === "error" ? "error" : "success") : "no-usage",
+            error_code: callMeta?.errorCode ?? null,
             error_message: event.errorMessage ?? null,
-            retry_count: event.retryCount ?? 0,
+            retry_count: 0,
             prompt_hash: null,
             response_hash: null,
             preview: config.storePreview ? String(event.preview ?? "").slice(0, config.previewMaxChars) : null,
@@ -223,7 +386,10 @@ export function createTokenUsageLedgerPlugin(options = {}) {
               rawChannelName,
               normalizedChannelName: channelName
             })
-          });
+          };
+          await db.insertUsageEvent(row);
+          debugLog({ event: "usage_event_inserted", id: row.id, runId: row.run_id, sessionKey: row.session_key, status: row.status, callSource: row.call_source, totalTokens: row.total_tokens });
+          await enqueueMirror(row);
         } catch (error) {
           debugLog({ event: "llm_output_error", message: error?.message, stack: error?.stack, code: error?.code });
           api.logger?.warn?.("token-usage-ledger failed to record usage", error);
@@ -233,9 +399,113 @@ export function createTokenUsageLedgerPlugin(options = {}) {
   };
 }
 
+function firstString(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return null;
+}
+
+function firstNumber(...values) {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  }
+  return null;
+}
+
+function durationMsBetween(startedAt, endedAt) {
+  if (!startedAt || !endedAt) return null;
+  const start = Date.parse(startedAt);
+  const end = Date.parse(endedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  return end - start;
+}
+
+function extractTimeToFirstTokenMs(event = {}, ctx = {}) {
+  return firstNumber(
+    event.timeToFirstTokenMs,
+    event.time_to_first_token_ms,
+    event.ttftMs,
+    event.firstTokenLatencyMs,
+    ctx.timeToFirstTokenMs,
+    ctx.time_to_first_token_ms,
+    ctx.ttftMs,
+    ctx.firstTokenLatencyMs
+  );
+}
+
+function dropNullish(obj = {}) {
+  return Object.fromEntries(Object.entries(obj).filter(([, value]) => value !== null && value !== undefined));
+}
+
+function hasAttribution(attribution = {}) {
+  return Boolean(
+    attribution.senderName ||
+    attribution.senderId ||
+    attribution.sessionKey ||
+    attribution.runId ||
+    attribution.agentId ||
+    attribution.platform ||
+    attribution.channelName ||
+    attribution.channelId ||
+    attribution.messageProvider
+  );
+}
+
+function buildMessageAttribution(event = {}, ctx = {}) {
+  const metadata = event.metadata && typeof event.metadata === "object" ? event.metadata : {};
+  const sessionKey = firstString(event.sessionKey, ctx.sessionKey);
+  const runId = firstString(event.runId, ctx.runId);
+  const parsed = parseSessionKey(sessionKey);
+  const senderId = firstString(event.senderId, ctx.senderId, metadata.senderId, parsed.platformUserId);
+
+  return {
+    sessionKey,
+    runId,
+    senderId,
+    senderName: firstString(metadata.senderName, event.senderName, ctx.senderName),
+    agentId: firstString(event.agentId, ctx.agentId, parsed.agentId),
+    channelId: firstString(event.channelId, ctx.channelId, metadata.channelId, parsed.channelId),
+    channelName: firstString(event.channelName, ctx.channelName, metadata.channelName, parsed.channelName),
+    messageProvider: firstString(event.messageProvider, ctx.messageProvider, metadata.messageProvider, parsed.messageProvider),
+    platform: firstString(event.platform, ctx.platform, metadata.platform, parsed.platform),
+    platformUserId: senderId,
+    platformTenantId: firstString(event.platformTenantId, ctx.platformTenantId, metadata.platformTenantId, event.tenantId, ctx.tenantId, metadata.tenantId),
+    platformConversationId: firstString(event.platformConversationId, ctx.platformConversationId, metadata.platformConversationId, event.threadId, ctx.threadId, metadata.threadId, metadata.originatingTo, parsed.platformConversationId),
+    platformMessageId: firstString(event.platformMessageId, ctx.platformMessageId, event.messageId, ctx.messageId, metadata.messageId),
+    threadId: firstString(event.threadId, ctx.threadId, metadata.threadId)
+  };
+}
+
+function enrichWithAttribution(event = {}, ctx = {}, attribution = {}) {
+  const fallback = dropNullish({
+    sessionKey: attribution.sessionKey,
+    runId: attribution.runId,
+    agentId: attribution.agentId,
+    channelId: attribution.channelId,
+    channelName: attribution.channelName,
+    messageProvider: attribution.messageProvider,
+    platform: attribution.platform,
+    platformUserId: attribution.platformUserId ?? attribution.senderId,
+    platformUserDisplayName: attribution.senderName,
+    platformTenantId: attribution.platformTenantId,
+    platformConversationId: attribution.platformConversationId,
+    platformMessageId: attribution.platformMessageId,
+    threadId: attribution.threadId
+  });
+
+  return {
+    event: { ...fallback, ...event },
+    ctx: { ...fallback, ...ctx }
+  };
+}
+
 function registerHook(api, hookName, handler) {
   if (typeof api.on === "function") {
-    api.on(hookName, handler);
+    // New SDK: api.on passes a single event object; context is at event.context.
+    // Wrap to preserve the (event, ctx) signature used throughout this plugin.
+    api.on(hookName, (event = {}) => handler(event, event.context ?? {}));
     return;
   }
   if (typeof api.registerHook === "function") {
@@ -248,14 +518,36 @@ function registerHook(api, hookName, handler) {
 }
 
 function buildCallKey(event = {}, ctx = {}) {
+  // ctx owns execution-context fields; event owns call-specific fields.
+  // model_call_started/model_call_ended also carry runId on the event itself (docs).
   return [
     ctx.runId ?? event.runId,
     event.callId,
-    ctx.sessionId ?? event.sessionId,
-    ctx.sessionKey ?? event.sessionKey,
-    event.provider ?? ctx.provider,
-    event.model ?? ctx.model
+    ctx.sessionId,
+    ctx.sessionKey,
+    event.provider,
+    event.model
   ].map((value) => value ?? "").join("|");
+}
+
+function callMetaKeys(event = {}, ctx = {}) {
+  const keys = [buildCallKey(event, ctx)];
+  const runKey = buildRunKey(event, ctx);
+  if (runKey) keys.push(`run:${runKey}`);
+  return [...new Set(keys.filter(Boolean))];
+}
+
+function buildRunKey(event = {}, ctx = {}) {
+  // ctx.runId is the canonical source; event.runId is listed as optional on tool hooks (docs).
+  const id = ctx.runId ?? event.runId ?? null;
+  return typeof id === "string" && id.trim() ? id : null;
+}
+
+function senderCacheKeys({ sessionKey, runId } = {}) {
+  return [
+    typeof runId === "string" && runId.trim() ? `run:${runId}` : null,
+    typeof sessionKey === "string" && sessionKey.trim() ? `session:${sessionKey}` : null
+  ].filter(Boolean);
 }
 
 function buildMetadataJson(event = {}, ctx = {}, extra = {}) {
@@ -266,69 +558,63 @@ function buildMetadataJson(event = {}, ctx = {}, extra = {}) {
   });
 }
 
-function deriveRuntimeHints(event = {}, ctx = {}) {
-  const sessionKey = ctx.sessionKey ?? event.sessionKey ?? null;
-  const runtimeId = ctx.runtimeId ?? event.runtimeId ?? null;
-  const channelId = ctx.channelId ?? event.channelId ?? null;
-  const trigger = ctx.trigger ?? event.trigger ?? null;
-  const messageProvider = ctx.messageProvider ?? event.messageProvider ?? null;
-  const hints = {
-    sessionKey,
-    agentId: null,
-    platform: null,
-    channelName: null,
-    source: null
+function parseSessionKey(sessionKey) {
+  if (typeof sessionKey !== "string") return {};
+  const parts = sessionKey.trim().split(":");
+  if (parts[0] !== "agent" || parts.length < 3) return {};
+
+  const agentId = parts[1] || null;
+  const channelName = parts[2] || null;
+  const channelKind = parts[3] || null;
+  const channelId = parts.slice(4).join(":") || null;
+  const isTuiSession = /^tui-/i.test(channelName ?? "");
+  const isChatSession = Boolean(channelId || channelKind === "direct" || channelKind === "group");
+  const platform = isTuiSession ? "openclaw" : isChatSession ? normalizeChannelName(channelName) ?? channelName : null;
+  const directUserId = channelKind === "direct" ? parseImChannelUserId(channelId) ?? channelId : null;
+
+  return {
+    agentId,
+    channelName: isTuiSession ? "tui" : isChatSession ? channelName : null,
+    messageProvider: platform,
+    platform,
+    channelId,
+    platformUserId: directUserId,
+    platformConversationId: channelKind === "group" ? channelId : null
   };
-
-  if (typeof sessionKey === "string") {
-    const match = /^agent:([^:]+):(.+)$/.exec(sessionKey);
-    if (match) {
-      hints.agentId = match[1] || null;
-      const tail = match[2] || "";
-      if (tail.startsWith("tui-")) {
-        hints.platform = "openclaw";
-        hints.channelName = "tui";
-        hints.source = "tui";
-      }
-    } else if (sessionKey.includes("tui-")) {
-      hints.platform = "openclaw";
-      hints.channelName = "tui";
-      hints.source = "tui";
-    }
-  }
-
-  if (!hints.channelName && typeof messageProvider === "string" && messageProvider.trim()) {
-    hints.platform = hints.platform ?? "openclaw";
-    hints.channelName = messageProvider.trim().toLowerCase();
-    hints.source = hints.source ?? hints.channelName;
-  }
-
-  if (!hints.channelName && typeof channelId === "string" && channelId.trim()) {
-    const imPlatform = parseImChannelPlatform(channelId);
-    const feishuPlatform = parseFeishuChannelId(channelId);
-    const platform = imPlatform ?? feishuPlatform;
-    if (platform) {
-      hints.platform = hints.platform ?? "openclaw";
-      hints.channelName = platform;
-      hints.source = hints.source ?? platform;
-    } else {
-      hints.channelName = channelId;
-    }
-  }
-
-  if (!hints.source && typeof trigger === "string" && trigger.trim()) {
-    if (trigger.includes("tui")) {
-      hints.platform = hints.platform ?? "openclaw";
-      hints.channelName = hints.channelName ?? "tui";
-      hints.source = "tui";
-    }
-  }
-
-  if (typeof runtimeId === "string" && runtimeId.startsWith("tui-") && !hints.source) {
-    hints.platform = hints.platform ?? "openclaw";
-    hints.channelName = hints.channelName ?? "tui";
-    hints.source = "tui";
-  }
-
-  return hints;
 }
+
+function extractRuntimeMetadata(event = {}, ctx = {}, fallback = {}) {
+  // ctx owns all execution-context identity fields; event owns call-specific fields.
+  const sessionKey = ctx.sessionKey ?? event.sessionKey ?? null;
+  const agentId = ctx.agentId ?? event.agentId ?? parseAgentNameFromSessionKey(sessionKey);
+
+  return {
+    agentId,
+    agentName:       agentId,
+    runtimeId:       ctx.runtimeId       ?? event.runtimeId ?? null,
+    machineIdentity: ctx.machineIdentity  ?? event.machineIdentity ?? fallback.machineIdentity ?? null,
+    gatewayProfile:  ctx.gatewayProfile   ?? event.gatewayProfile ?? null,
+    sessionKey,
+    sessionId:       ctx.sessionId        ?? event.sessionId ?? null,
+    runId:           ctx.runId            ?? event.runId ?? null,
+    requestId:       event.callId         ?? event.requestId ?? event.resolvedRef ?? event.harnessId ?? event.runId ?? null
+  };
+}
+
+function parseAgentNameFromSessionKey(sessionKey) {
+  if (typeof sessionKey !== "string") return null;
+  const match = /^agent:([^:]+):/i.exec(sessionKey.trim());
+  return match && match[1] ? match[1] : null;
+}
+
+function sqliteBindingTroubleshootingMessage(error) {
+  const message = error?.message ?? String(error ?? "unknown error");
+  return [
+    "token-usage-ledger failed to initialize SQLite storage.",
+    "This release uses a non-native sql.js backend, so host native bindings are not required.",
+    "If this error persists, reinstall the plugin package and restart gateway.",
+    `Original error: ${message}`
+  ].join(" ");
+}
+
+

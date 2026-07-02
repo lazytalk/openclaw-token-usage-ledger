@@ -19,20 +19,40 @@ Stored fields include:
 
 ## Configuration
 
-The plugin runtime schema currently accepts one plugin config key:
+The plugin runtime schema currently accepts:
 
 - `dbPath` (optional): absolute path to the SQLite file.
+- `mirror` (optional): mirror settings for central HTTP ingest.
+
+`mirror` fields:
+
+- `enabled`: enable central mirror posting.
+- `url`: central ingest endpoint.
+- `apiKey`: bearer token for the endpoint.
+- `timeoutMs`: per-request timeout (default `5000`).
+- `retryIntervalMs`: background queue flush interval (default `15000`).
+- `retryBaseDelayMs`: exponential retry base delay (default `2000`).
+- `retryMaxDelayMs`: exponential retry max delay (default `300000`).
+- `maxBatchSize`: queued rows sent per flush (default `50`).
+
+Mirror delivery model:
+
+- Every event is written to local SQLite first.
+- Each event is then enqueued in a persistent local mirror outbox.
+- A background worker flushes due outbox rows to the central endpoint.
+- Failed sends are retried with exponential backoff until they succeed.
+- This gives eventual sync without blocking local ledger recording.
 
 Default database path when `dbPath` is omitted:
 
-- `~/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite`
+- `~/.openclaw/plugins/token-usage-ledger/usage.sqlite`
 
 To inspect the ledger on a host, set `DB` from config and fall back to that default path if the config omits `dbPath`:
 
 ```bash
 DB="$(jq -r '.plugins.entries["token-usage-ledger"].config.dbPath // empty' "$HOME/.openclaw/openclaw.json")"
 if [ -z "$DB" ]; then
-  DB="$HOME/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite"
+  DB="$HOME/.openclaw/plugins/token-usage-ledger/usage.sqlite"
 fi
 ```
 
@@ -48,7 +68,7 @@ Example plugin entry in `openclaw.json`:
           "allowConversationAccess": true
         },
         "config": {
-          "dbPath": "/Users/you/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite"
+          "dbPath": "/Users/you/.openclaw/plugins/token-usage-ledger/usage.sqlite"
         }
       }
     },
@@ -62,6 +82,17 @@ Example plugin entry in `openclaw.json`:
 `allowConversationAccess` is required for non-bundled plugins to receive `llm_output`.
 
 If you reinstall the plugin, OpenClaw may remove the entry from `openclaw.json`. Reapply the config patch above after reinstalling.
+
+### Feishu Display Names
+
+For Feishu/Lark bots, the display name recorded in `platform_user_display_name` comes from OpenClaw's `message_received` sender metadata. The Feishu app behind each bot must be granted contact read permission manually in the Feishu developer/admin console; otherwise Feishu may only return the sender open id, and rows will show values such as `ou_...` instead of a human name.
+
+Grant the bot app the user basic information read permission:
+
+- permission scope: `contact:user.base:readonly`
+- console label: `Read user basic information` / `获取用户基本信息`
+
+After granting the permission, publish or apply the app permission change, approve it in the tenant admin console if required, restart the OpenClaw gateway, and send a fresh Feishu message. A healthy `message_received` log entry should include a real `senderName`, and new ledger rows should store that value in `platform_user_display_name`.
 
 ## Install For Local Development
 
@@ -93,7 +124,7 @@ bash scripts/setup-openclaw.sh
 To also pin a specific SQLite path, pass it as the first argument or set `OPENCLAW_DB_PATH`:
 
 ```bash
-bash scripts/setup-openclaw.sh /Users/you/.openclaw-ops/plugins/token-usage-ledger/usage.sqlite
+bash scripts/setup-openclaw.sh /Users/you/.openclaw/plugins/token-usage-ledger/usage.sqlite
 ```
 
 To start a clean smoke test from an empty ledger, back up and clear the current SQLite files first:
@@ -106,19 +137,35 @@ That moves the current database, WAL, and SHM files into a timestamped backup fo
 
 Healthy runtime output should show:
 
-- `hookCount: 3`
-- `typedHooks`: `llm_output`, `model_call_started`, `model_call_ended`
+- `hookCount: 4`
+- `typedHooks`: `llm_output`, `message_received`, `model_call_started`, `model_call_ended`
 - no diagnostics about blocked `llm_output`
 
-The production SQLite writer uses `better-sqlite3`. The local unit tests avoid native dependencies where possible, but a real OpenClaw install should run `npm install` first.
+The production SQLite writer uses `sql.js` (WASM SQLite), so it does not require native Node bindings.
 
-For OpenClaw `2026.6.1`, dependency installation depends on the install mode:
+For OpenClaw `2026.6.1`, managed installs remain deterministic because `sql.js` does not depend on native postinstall build steps.
 
-- `git:` plugin installs run `npm install --omit=dev` automatically before OpenClaw loads the plugin.
-- npm/package installs are installed into OpenClaw's managed npm root automatically.
-- Raw local directory installs should be treated as source installs; run `npm install` in this repo first so `better-sqlite3` exists.
+If plugin runtime logs still show SQLite initialization errors, reinstall and restart:
 
-If `better-sqlite3` cannot use a prebuilt binary on your remote machine, the machine needs a working native build toolchain for Node modules.
+```bash
+openclaw plugins install /path/to/token-usage-ledger-<version>.tgz --force
+openclaw gateway restart
+```
+
+### Supported install paths (OpenClaw 2026.6.1)
+
+For this OpenClaw build, `openclaw plugins install` supports local paths (and linked local source), but URL npm specs are rejected.
+
+Supported:
+
+- Local package artifact (`.tgz`) path
+- Local source directory with `--link`
+
+Not supported in this build:
+
+- `git+https://...`
+- `https://...`
+- Other URL-based npm specs
 
 ## Updating the Plugin
 
@@ -146,7 +193,108 @@ After restarting, verify the plugin is loaded correctly:
 openclaw plugins inspect token-usage-ledger --runtime --json
 ```
 
-Healthy output should show `hookCount: 3` and no diagnostics about blocked `llm_output`.
+Healthy output should show `hookCount: 4` and no diagnostics about blocked `llm_output`.
+
+If you install from release artifacts, update with one of these paths and then restart:
+
+- tracked install update:
+
+```bash
+openclaw plugins update /path/to/token-usage-ledger-<version>.tgz
+openclaw gateway restart
+```
+
+- direct replace (when install says plugin already exists):
+
+```bash
+openclaw plugins install /path/to/token-usage-ledger-<version>.tgz --force
+openclaw gateway restart
+```
+
+## Release Artifact Deployment
+
+For normal production rollout, prefer a versioned package artifact instead of manual file-by-file sync.
+
+Create an artifact from this repo:
+
+```bash
+npm run release:pack
+```
+
+Create an artifact and bump version in one step:
+
+```bash
+npm run release:patch
+```
+
+By default, bump releases also create:
+
+- a release commit: `chore(release): vX.Y.Z`
+- an annotated git tag: `vX.Y.Z`
+
+To bump and pack without creating a tag:
+
+```bash
+node scripts/release-pack.mjs --bump patch --no-tag
+```
+
+Other bump levels:
+
+```bash
+npm run release:minor
+npm run release:major
+```
+
+These commands create tarballs under `assets/` and print the exact install command for OpenClaw.
+
+### GitHub auto-release on version bump
+
+This repo includes a GitHub Actions workflow at `.github/workflows/release-on-version-bump.yml`.
+
+Behavior on each push to `main`:
+
+- Reads `package.json` version.
+- Compares it to the latest `v*` tag.
+- If version increased, it creates and pushes a new tag (`vX.Y.Z`), packs the plugin tarball, and publishes a GitHub Release with the artifact.
+- If version did not increase, it skips release.
+
+This means packaging can be fully automated with one rule: bump `package.json` version when you want a release.
+
+Install the generated GitHub release asset by downloading the stable latest file, then installing the local file with `openclaw plugins install`:
+
+```bash
+TMP_TGZ="${TMPDIR:-/tmp}/token-usage-ledger.tgz"
+
+curl -fL -o "$TMP_TGZ" \
+  "https://github.com/lazytalk/openclaw-token-usage-ledger/releases/latest/download/token-usage-ledger.tgz"
+
+openclaw plugins install "$TMP_TGZ" --force
+openclaw gateway restart
+openclaw plugins inspect token-usage-ledger --runtime --json
+```
+
+Each release publishes both assets:
+
+- versioned historical artifact: `token-usage-ledger-X.Y.Z.tgz`
+- stable latest alias: `token-usage-ledger.tgz`
+
+macOS quick upgrade (copy/paste):
+
+```bash
+TMP_TGZ="${TMPDIR:-/tmp}/token-usage-ledger.tgz"
+
+curl -fL -o "$TMP_TGZ" \
+  "https://github.com/lazytalk/openclaw-token-usage-ledger/releases/latest/download/token-usage-ledger.tgz" \
+  && openclaw plugins install "$TMP_TGZ" --force \
+  && openclaw gateway restart \
+  && openclaw plugins inspect token-usage-ledger --runtime --json
+```
+
+Versioning policy recommendation:
+
+- Do not bump package version for every commit.
+- Bump package version for each release/deployment artifact (patch/minor/major by semantic versioning).
+- Multiple commits can belong to one versioned release.
 
 ## Report Command
 

@@ -9,6 +9,7 @@ export const usageEventsColumns = [
   "agent_id",
   "agent_name",
   "runtime_id",
+  "machine_identity",
   "platform",
   "channel_name",
   "platform_user_id",
@@ -66,6 +67,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
   agent_id TEXT,
   agent_name TEXT,
   runtime_id TEXT,
+  machine_identity TEXT,
   platform TEXT,
   channel_name TEXT,
   platform_user_id TEXT,
@@ -124,4 +126,19 @@ CREATE INDEX IF NOT EXISTS idx_usage_source_time
 CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_provider_request
   ON usage_events(provider_request_id)
   WHERE provider_request_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS mirror_outbox (
+  id TEXT PRIMARY KEY,
+  payload_json TEXT NOT NULL,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  last_attempt_at TEXT,
+  next_retry_at TEXT,
+  last_error TEXT,
+  synced_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_mirror_outbox_due
+  ON mirror_outbox(synced_at, next_retry_at, updated_at);
 `;

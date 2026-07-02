@@ -1,0 +1,146 @@
+name: Release On Version Bump
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-on-version-bump-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Decide whether to release
+        id: decide
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="v${VERSION}"
+
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "package.json version must be semver X.Y.Z, got: $VERSION"
+            exit 1
+          fi
+
+          LATEST_TAG="$(git tag --list 'v*' --sort=-v:refname | head -n1 || true)"
+
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "do_release=false" >> "$GITHUB_OUTPUT"
+            echo "reason=tag_exists" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -z "$LATEST_TAG" ]; then
+            echo "do_release=true" >> "$GITHUB_OUTPUT"
+            echo "reason=first_release" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          LATEST_VERSION="${LATEST_TAG#v}"
+          CMP="$(A="$VERSION" B="$LATEST_VERSION" node -e "
+            const a = process.env.A || '';
+            const b = process.env.B || '';
+            const parse = (v) => {
+              const m = /^(\\d+)\\.(\\d+)\\.(\\d+)$/.exec(v);
+              if (!m) return null;
+              return [Number(m[1]), Number(m[2]), Number(m[3])];
+            };
+            const pa = parse(a);
+            const pb = parse(b);
+            if (!pa || !pb) {
+              console.log('invalid');
+              process.exit(0);
+            }
+            for (let i = 0; i < 3; i += 1) {
+              if (pa[i] > pb[i]) {
+                console.log('gt');
+                process.exit(0);
+              }
+              if (pa[i] < pb[i]) {
+                console.log('lt');
+                process.exit(0);
+              }
+            }
+            console.log('eq');
+          ")"
+
+          if [ "$CMP" = "invalid" ]; then
+            echo "Could not compare package version '$VERSION' with latest tag '$LATEST_TAG'"
+            exit 1
+          fi
+
+          if [ "$CMP" = "gt" ]; then
+            echo "do_release=true" >> "$GITHUB_OUTPUT"
+            echo "reason=version_bumped" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "do_release=false" >> "$GITHUB_OUTPUT"
+            echo "reason=version_not_increased" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: No release summary
+        if: steps.decide.outputs.do_release != 'true'
+        shell: bash
+        run: |
+          echo "Skipping release: ${{ steps.decide.outputs.reason }}"
+
+      - name: Create and push tag
+        if: steps.decide.outputs.do_release == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.decide.outputs.tag_name }}" -m "${{ steps.decide.outputs.tag_name }}"
+          git push origin "${{ steps.decide.outputs.tag_name }}"
+
+      - name: Pack release artifact
+        if: steps.decide.outputs.do_release == 'true'
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          npm pack --pack-destination assets --json > assets/pack.json
+          FILE_NAME="$(node -e "const fs=require('fs'); const d=JSON.parse(fs.readFileSync('assets/pack.json','utf8')); const f=Array.isArray(d)?d[0]?.filename:d?.filename; if(!f){process.exit(1)}; process.stdout.write(f);")"
+          LATEST_NAME="token-usage-ledger.tgz"
+          cp "assets/${FILE_NAME}" "assets/${LATEST_NAME}"
+          echo "artifact_versioned=assets/${FILE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "artifact_latest=assets/${LATEST_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        if: steps.decide.outputs.do_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.decide.outputs.tag_name }}
+          name: ${{ steps.decide.outputs.tag_name }}
+          generate_release_notes: true
+          files: |
+            ${{ steps.pack.outputs.artifact_versioned }}
+            ${{ steps.pack.outputs.artifact_latest }}
