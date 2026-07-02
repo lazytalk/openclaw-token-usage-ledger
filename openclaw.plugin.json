@@ -11,6 +11,37 @@
         "type": "string",
         "description": "Absolute path to the SQLite database file. Defaults to a file inside the plugin's data directory."
       },
+      "logLevel": {
+        "type": "string",
+        "description": "Controls how much detail is written to debug.jsonl. Accepted values: off, error, info, debug. Defaults to debug."
+      },
+      "debug": {
+        "type": "object",
+        "description": "Optional development diagnostics for raw hook payload capture.",
+        "additionalProperties": false,
+        "properties": {
+          "captureHookPayloads": {
+            "type": "boolean",
+            "description": "When true, write every received hook event and context payload to hook-payloads.jsonl. Defaults to false."
+          },
+          "includeContent": {
+            "type": "boolean",
+            "description": "When true, include prompt/response/tool content fields if OpenClaw exposes them in hook payloads. Defaults to true when capture is enabled."
+          },
+          "redactSecrets": {
+            "type": "boolean",
+            "description": "When true, redact obvious secret fields such as tokens, authorization headers, cookies, passwords, API keys, and secrets. Defaults to true."
+          },
+          "maxPayloadBytes": {
+            "type": "number",
+            "description": "Maximum bytes per JSONL debug record before replacing payloads with a truncated marker. Defaults to 262144."
+          },
+          "logPath": {
+            "type": "string",
+            "description": "Absolute path for raw hook payload JSONL. Defaults to ~/.openclaw/plugins/token-usage-ledger/hook-payloads.jsonl."
+          }
+        }
+      },
       "mirror": {
         "type": "object",
         "additionalProperties": false,

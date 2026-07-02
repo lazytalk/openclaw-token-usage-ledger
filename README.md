@@ -19,44 +19,92 @@ Stored fields include:
 
 ## Configuration
 
-The plugin runtime schema currently accepts:
+All config lives under the plugin's `config` key in `openclaw.json`. Every field is optional.
 
-- `dbPath` (optional): absolute path to the SQLite file.
-- `mirror` (optional): mirror settings for central HTTP ingest.
+### `dbPath`
 
-`mirror` fields:
+Absolute path to the SQLite file. Defaults to `~/.openclaw/plugins/token-usage-ledger/usage.sqlite`.
 
-- `enabled`: enable central mirror posting.
-- `url`: central ingest endpoint.
-- `apiKey`: bearer token for the endpoint.
-- `timeoutMs`: per-request timeout (default `5000`).
-- `retryIntervalMs`: background queue flush interval (default `15000`).
-- `retryBaseDelayMs`: exponential retry base delay (default `2000`).
-- `retryMaxDelayMs`: exponential retry max delay (default `300000`).
-- `maxBatchSize`: queued rows sent per flush (default `50`).
+### `logLevel`
 
-Mirror delivery model:
+Controls how much detail is written to `debug.jsonl`. Restart the gateway after changing.
 
-- Every event is written to local SQLite first.
-- Each event is then enqueued in a persistent local mirror outbox.
-- A background worker flushes due outbox rows to the central endpoint.
-- Failed sends are retried with exponential backoff until they succeed.
-- This gives eventual sync without blocking local ledger recording.
+| Value | Written to `debug.jsonl` |
+|---|---|
+| `off` | Nothing |
+| `error` | Errors only: failed model call recording, mirror delivery failures, hook capture errors |
+| `info` | Errors plus: plugin registration, every inserted usage event, sender attribution claims |
+| `debug` | Everything above plus: sender cache hits, tool call traces, raw-usage absence warnings (default) |
 
-Default database path when `dbPath` is omitted:
-
-- `~/.openclaw/plugins/token-usage-ledger/usage.sqlite`
-
-To inspect the ledger on a host, set `DB` from config and fall back to that default path if the config omits `dbPath`:
-
-```bash
-DB="$(jq -r '.plugins.entries["token-usage-ledger"].config.dbPath // empty' "$HOME/.openclaw/openclaw.json")"
-if [ -z "$DB" ]; then
-  DB="$HOME/.openclaw/plugins/token-usage-ledger/usage.sqlite"
-fi
+```json
+"config": {
+  "logLevel": "info"
+}
 ```
 
-Example plugin entry in `openclaw.json`:
+Use `"info"` in production to keep the log small. Use `"debug"` when diagnosing attribution or missing events. Use `"off"` to disable `debug.jsonl` entirely.
+
+### `debug` — Raw Hook Payload Capture
+
+Opt-in development capture of the raw `event` and `ctx` objects that OpenClaw passes to this plugin when each hook fires. Disabled by default. Written to a separate file (`hook-payloads.jsonl`) so it does not mix with `debug.jsonl`.
+
+| Field | Default | Description |
+|---|---|---|
+| `captureHookPayloads` | `false` | Enable capture. Set `true` to start recording. |
+| `includeContent` | `true` | Include content fields (prompt, response, tool args/results, messages) if OpenClaw exposes them. |
+| `redactSecrets` | `true` | Replace obvious secret fields (authorization, API keys, passwords, cookies) with `[REDACTED]`. |
+| `maxPayloadBytes` | `262144` | Max bytes per JSONL line. Lines over this limit are replaced by a truncation marker preserving key names only. |
+| `logPath` | `~/.openclaw/plugins/token-usage-ledger/hook-payloads.jsonl` | Override the output file path. |
+
+Hooks captured: `message_received`, `model_call_started`, `after_tool_call`, `model_call_ended`, `llm_output`.
+
+Each line in `hook-payloads.jsonl` is a JSON object with:
+
+```
+ts             ISO timestamp when the hook fired
+hookName       which hook (e.g. "llm_output")
+eventKeys      list of keys present in the raw event payload
+contextKeys    list of keys present in the raw context payload
+eventPayload   full raw event object (redacted/truncated per config)
+contextPayload full raw context object (redacted/truncated per config)
+```
+
+**When to enable:** turn on when you need to understand exactly what data OpenClaw exposes in each hook — for example to diagnose missing fields, inspect whether prompt/response content is available, or audit tool call payloads. Turn off in production.
+
+**Security note:** if `includeContent: true` and OpenClaw exposes prompt or response content in hook payloads, that content will be written to disk in plaintext. Use `redactSecrets: true` (the default) at all times to avoid leaking API keys or tokens that may appear in event objects.
+
+```json
+"config": {
+  "debug": {
+    "captureHookPayloads": true,
+    "includeContent": true,
+    "redactSecrets": true
+  }
+}
+```
+
+To disable after capturing what you need, set `captureHookPayloads: false` and restart the gateway.
+
+### `mirror`
+
+Mirror each locally recorded usage row to a central HTTP ingest endpoint.
+
+| Field | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Enable mirroring. Also requires `url` and `apiKey`. |
+| `url` | — | HTTP endpoint that accepts usage event POST requests. |
+| `apiKey` | — | Bearer token sent as the `Authorization` header. |
+| `timeoutMs` | `5000` | Per-request timeout in ms. |
+| `retryIntervalMs` | `15000` | Background queue flush interval in ms. |
+| `retryBaseDelayMs` | `2000` | Exponential retry base delay in ms. |
+| `retryMaxDelayMs` | `300000` | Exponential retry max delay in ms. |
+| `maxBatchSize` | `50` | Rows sent per flush cycle. |
+
+Delivery model: every event is written to local SQLite first, then enqueued in a persistent local outbox. A background worker flushes due rows to the central endpoint and retries failures with exponential backoff.
+
+---
+
+### Full `openclaw.json` example
 
 ```json
 {
@@ -68,7 +116,18 @@ Example plugin entry in `openclaw.json`:
           "allowConversationAccess": true
         },
         "config": {
-          "dbPath": "/Users/you/.openclaw/plugins/token-usage-ledger/usage.sqlite"
+          "dbPath": "/Users/you/.openclaw/plugins/token-usage-ledger/usage.sqlite",
+          "logLevel": "info",
+          "debug": {
+            "captureHookPayloads": false,
+            "includeContent": true,
+            "redactSecrets": true
+          },
+          "mirror": {
+            "enabled": true,
+            "url": "http://your-hub-host:3000/api/v1/usage-events",
+            "apiKey": "your-ingest-api-key"
+          }
         }
       }
     },
@@ -80,6 +139,15 @@ Example plugin entry in `openclaw.json`:
 ```
 
 `allowConversationAccess` is required for non-bundled plugins to receive `llm_output`.
+
+To inspect the default SQLite path:
+
+```bash
+DB="$(jq -r '.plugins.entries["token-usage-ledger"].config.dbPath // empty' "$HOME/.openclaw/openclaw.json")"
+if [ -z "$DB" ]; then
+  DB="$HOME/.openclaw/plugins/token-usage-ledger/usage.sqlite"
+fi
+```
 
 If you reinstall the plugin, OpenClaw may remove the entry from `openclaw.json`. Reapply the config patch above after reinstalling.
 

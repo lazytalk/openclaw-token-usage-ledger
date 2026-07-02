@@ -13,6 +13,7 @@ import { extractToolSummary, extractToolSummaryFromAfterToolCall, mergeToolSumma
 // Always write debug log to the plugin data dir; override with LEDGER_DEBUG_LOG env var.
 const _defaultDebugLog = resolve(homedir(), ".openclaw", "plugins", "token-usage-ledger", "debug.jsonl");
 const DEBUG_LOG = process.env.LEDGER_DEBUG_LOG ?? _defaultDebugLog;
+const DEFAULT_HOOK_PAYLOAD_LOG = resolve(homedir(), ".openclaw", "plugins", "token-usage-ledger", "hook-payloads.jsonl");
 function debugLog(obj) {
   try {
     mkdirSync(dirname(DEBUG_LOG), { recursive: true });
@@ -29,6 +30,14 @@ const defaultConfig = {
   defaultCurrency: "USD",
   localModelsCostMode: "zero",
   debugRawUsage: true,
+  logLevel: "debug",
+  debug: {
+    captureHookPayloads: false,
+    includeContent: true,
+    redactSecrets: true,
+    maxPayloadBytes: 262144,
+    logPath: null
+  },
   pricing: {},
   mirror: {
     enabled: false,
@@ -52,6 +61,8 @@ export function createTokenUsageLedgerPlugin(options = {}) {
     description: "Durable SQLite token accounting for OpenClaw model calls.",
     register(api = {}) {
       const config = { ...defaultConfig, ...(api.pluginConfig ?? api.config ?? {}) };
+      config.debug = { ...defaultConfig.debug, ...(config.debug ?? {}) };
+      const log = createLeveledDebugLog(config.logLevel, debugLog);
       const db = createDb(config.dbPath);
       const dbReady = Promise.resolve()
         .then(() => db.query("SELECT 1 AS ok"))
@@ -66,7 +77,8 @@ export function createTokenUsageLedgerPlugin(options = {}) {
       // Keyed by sessionKey and runId so model hooks with empty ctx can still be attributed.
       const senderCache = new Map();
       let pendingSender = null;
-      debugLog({ event: "register", dbPath: config.dbPath });
+      log.info({ event: "register", dbPath: config.dbPath });
+      const captureHookPayload = createHookPayloadDebugger(config.debug, log.error);
 
       // Capture senderName from OpenClaw metadata.
       registerHook(api, "message_received", async (event = {}, ctx = {}) => {
@@ -92,11 +104,11 @@ export function createTokenUsageLedgerPlugin(options = {}) {
         if (hasAttribution(attribution)) {
           cacheSender(attribution);
           if (!firstString(runId)) pendingSender = { ...attribution, cachedAt: Date.now() };
-          debugLog({ event: "message_received_cache", sessionKey, runId, senderId, senderName, agentId: attribution.agentId, platform: attribution.platform, channelName: attribution.channelName });
+          log.debug({ event: "message_received_cache", sessionKey, runId, senderId, senderName, agentId: attribution.agentId, platform: attribution.platform, channelName: attribution.channelName });
         } else {
           pendingSender = null;
         }
-      });
+      }, captureHookPayload);
 
       function cacheSender(attribution = {}) {
         const { sessionKey, runId } = attribution;
@@ -126,7 +138,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           return;
         }
         cacheSender({ ...pendingSender, runId });
-        debugLog({ event: "message_received_run_claim", runId, sessionKey: pendingSender.sessionKey, senderId: pendingSender.senderId, senderName: pendingSender.senderName });
+        log.info({ event: "message_received_run_claim", runId, sessionKey: pendingSender.sessionKey, senderId: pendingSender.senderId, senderName: pendingSender.senderName });
         pendingSender = null;
       }
 
@@ -135,7 +147,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
         db,
         fetchImpl,
         dbReady,
-        debugLog
+        debugLog: log.error
       });
 
       registerHook(api, "model_call_started", (event = {}, ctx = {}) => {
@@ -147,7 +159,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           timeToFirstTokenMs: extractTimeToFirstTokenMs(event, ctx),
           upstreamRequestIdHash: event.upstreamRequestIdHash ?? ctx.upstreamRequestIdHash ?? null
         });
-      });
+      }, captureHookPayload);
 
       function cacheCallMeta(event = {}, ctx = {}, meta = {}) {
         for (const key of callMetaKeys(event, ctx)) {
@@ -168,7 +180,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
         const runKey = buildRunKey(event, ctx);
         const summary = extractToolSummaryFromAfterToolCall(event, ctx);
         claimPendingSender(runKey);
-        debugLog({
+        log.debug({
           event: "after_tool_call",
           runKey,
           toolName: event.toolName ?? null,
@@ -180,7 +192,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
 
         const existing = toolCallsByRun.get(runKey) ?? { toolCallCount: 0, toolNames: [] };
         toolCallsByRun.set(runKey, mergeToolSummaries(existing, summary));
-      });
+      }, captureHookPayload);
 
       registerHook(api, "model_call_ended", async (event = {}, ctx = {}) => {
         const previousMeta = resolveCallMeta(event, ctx);
@@ -264,7 +276,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             api.logger?.warn?.("token-usage-ledger failed to record failed model call", error);
           }
         }
-      });
+      }, captureHookPayload);
 
       registerHook(api, "llm_output", async (event = {}, ctx = {}) => {
         try {
@@ -272,7 +284,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           const runtimeMeta = extractRuntimeMetadata(event, ctx, { machineIdentity: systemMachineIdentity });
           const rawUsage = event.usage;
           if (!rawUsage) {
-            debugLog({
+            log.debug({
               event: "llm_output_no_usage",
               usageValue: event.usage,
               provider: event.provider ?? null,
@@ -309,7 +321,7 @@ export function createTokenUsageLedgerPlugin(options = {}) {
           const assistantToolSummary = extractToolSummary(event);
           const runToolSummary = runKey ? (toolCallsByRun.get(runKey) ?? { toolNames: [], toolCallCount: 0 }) : { toolNames: [], toolCallCount: 0 };
           const toolSummary = mergeToolSummaries(assistantToolSummary, runToolSummary);
-          debugLog({
+          log.debug({
             event: "llm_output_tools",
             runKey,
             assistantToolCount: assistantToolSummary.toolCallCount,
@@ -388,13 +400,13 @@ export function createTokenUsageLedgerPlugin(options = {}) {
             })
           };
           await db.insertUsageEvent(row);
-          debugLog({ event: "usage_event_inserted", id: row.id, runId: row.run_id, sessionKey: row.session_key, status: row.status, callSource: row.call_source, totalTokens: row.total_tokens });
+          log.info({ event: "usage_event_inserted", id: row.id, runId: row.run_id, sessionKey: row.session_key, status: row.status, callSource: row.call_source, totalTokens: row.total_tokens });
           await enqueueMirror(row);
         } catch (error) {
-          debugLog({ event: "llm_output_error", message: error?.message, stack: error?.stack, code: error?.code });
+          log.error({ event: "llm_output_error", message: error?.message, stack: error?.stack, code: error?.code });
           api.logger?.warn?.("token-usage-ledger failed to record usage", error);
         }
-      });
+      }, captureHookPayload);
     }
   };
 }
@@ -501,15 +513,120 @@ function enrichWithAttribution(event = {}, ctx = {}, attribution = {}) {
   };
 }
 
-function registerHook(api, hookName, handler) {
+function createLeveledDebugLog(level, baseLog) {
+  const LEVELS = { off: 0, error: 1, info: 2, debug: 3 };
+  const threshold = LEVELS[level] ?? LEVELS.debug;
+  const noop = () => {};
+  return {
+    error: threshold >= LEVELS.error ? baseLog : noop,
+    info:  threshold >= LEVELS.info  ? baseLog : noop,
+    debug: threshold >= LEVELS.debug ? baseLog : noop,
+  };
+}
+
+function createHookPayloadDebugger(debugConfig = {}, debugLogger = debugLog) {
+  if (!debugConfig.captureHookPayloads) return null;
+
+  const logPath = firstString(debugConfig.logPath, process.env.LEDGER_HOOK_PAYLOAD_LOG, DEFAULT_HOOK_PAYLOAD_LOG);
+  const maxPayloadBytes = Math.max(1024, Number(debugConfig.maxPayloadBytes ?? 262144) || 262144);
+  const options = {
+    includeContent: debugConfig.includeContent !== false,
+    redactSecrets: debugConfig.redactSecrets !== false
+  };
+
+  return function captureHookPayload(hookName, event = {}, ctx = {}) {
+    try {
+      const captured = {
+        ts: new Date().toISOString(),
+        event: "hook_payload",
+        hookName,
+        eventKeys: Object.keys(event ?? {}),
+        contextKeys: Object.keys(ctx ?? {}),
+        eventPayload: sanitizeDebugValue(event, options),
+        contextPayload: sanitizeDebugValue(ctx, options)
+      };
+      const line = truncateJsonLine(captured, maxPayloadBytes);
+      mkdirSync(dirname(logPath), { recursive: true });
+      appendFileSync(logPath, line + "\n");
+    } catch (error) {
+      debugLogger({ event: "hook_payload_debug_error", hookName, message: error?.message ?? String(error) });
+    }
+  };
+}
+
+function truncateJsonLine(value, maxBytes) {
+  const line = JSON.stringify(value);
+  if (Buffer.byteLength(line, "utf8") <= maxBytes) return line;
+  return JSON.stringify({
+    ts: value.ts,
+    event: value.event,
+    hookName: value.hookName,
+    eventKeys: value.eventKeys,
+    contextKeys: value.contextKeys,
+    truncated: true,
+    maxPayloadBytes: maxBytes
+  });
+}
+
+function sanitizeDebugValue(value, options = {}, seen = new WeakSet()) {
+  if (value == null) return value;
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "function") return `[Function${value.name ? `: ${value.name}` : ""}]`;
+  if (typeof value !== "object") return value;
+  if (seen.has(value)) return "[Circular]";
+  seen.add(value);
+
+  if (Array.isArray(value)) return value.map((entry) => sanitizeDebugValue(entry, options, seen));
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack
+    };
+  }
+
+  const sanitized = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (options.redactSecrets && isSecretKey(key)) {
+      sanitized[key] = "[REDACTED]";
+      continue;
+    }
+    if (!options.includeContent && isContentKey(key)) {
+      sanitized[key] = "[CONTENT_OMITTED]";
+      continue;
+    }
+    sanitized[key] = sanitizeDebugValue(entry, options, seen);
+  }
+  return sanitized;
+}
+
+function isSecretKey(key) {
+  return /authorization|api[-_]?key|password|secret|cookie|set-cookie/i.test(key)
+    || /^token$/i.test(key)
+    || /^(access|refresh|id|auth|bearer)[-_]?token$/i.test(key)
+    || /^(access|refresh|id|auth|bearer)Token$/.test(key);
+}
+
+function isContentKey(key) {
+  return /prompt|response|content|message|messages|input|output|completion|transcript|text|result|arguments|args/i.test(key);
+}
+
+function registerHook(api, hookName, handler, captureHookPayload = null) {
   if (typeof api.on === "function") {
     // New SDK: api.on passes a single event object; context is at event.context.
     // Wrap to preserve the (event, ctx) signature used throughout this plugin.
-    api.on(hookName, (event = {}) => handler(event, event.context ?? {}));
+    api.on(hookName, (event = {}) => {
+      const ctx = event.context ?? {};
+      captureHookPayload?.(hookName, event, ctx);
+      return handler(event, ctx);
+    });
     return;
   }
   if (typeof api.registerHook === "function") {
-    api.registerHook(hookName, handler, {
+    api.registerHook(hookName, (event = {}, ctx = {}) => {
+      captureHookPayload?.(hookName, event, ctx);
+      return handler(event, ctx);
+    }, {
       name: hookName,
       events: [hookName]
     });

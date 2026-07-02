@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { createTokenUsageLedgerPlugin } from "../src/plugin.js";
 
@@ -28,6 +31,63 @@ test("registers OpenClaw 2026.6.1 hooks through registerHook", () => {
     "model_call_ended",
     "llm_output"
   ]);
+});
+
+test("captures raw hook event and context payloads when debug capture is enabled", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "token-usage-ledger-debug-"));
+  const logPath = join(tempDir, "hook-payloads.jsonl");
+  const handlers = {};
+  const plugin = createTokenUsageLedgerPlugin({
+    createDb() {
+      return {
+        query() { return []; },
+        insertUsageEvent() {}
+      };
+    }
+  });
+
+  try {
+    plugin.register({
+      pluginConfig: {
+        dbPath: ":memory:",
+        debug: {
+          captureHookPayloads: true,
+          logPath,
+          includeContent: true
+        }
+      },
+      registerHook(name, handler) { handlers[name] = handler; },
+      logger: { warn() {}, error() {} }
+    });
+
+    const event = {
+      callId: "call-debug-1",
+      prompt: "full prompt text",
+      authorization: "Bearer secret-token"
+    };
+    event.self = event;
+
+    handlers.model_call_started(event, {
+      runId: "run-debug-1",
+      contextValue: "ctx-visible"
+    });
+
+    const [line] = readFileSync(logPath, "utf8").trim().split("\n");
+    const record = JSON.parse(line);
+
+    assert.equal(record.event, "hook_payload");
+    assert.equal(record.hookName, "model_call_started");
+    assert.deepEqual(record.eventKeys, ["callId", "prompt", "authorization", "self"]);
+    assert.deepEqual(record.contextKeys, ["runId", "contextValue"]);
+    assert.equal(record.eventPayload.callId, "call-debug-1");
+    assert.equal(record.eventPayload.prompt, "full prompt text");
+    assert.equal(record.eventPayload.authorization, "[REDACTED]");
+    assert.equal(record.eventPayload.self, "[Circular]");
+    assert.equal(record.contextPayload.runId, "run-debug-1");
+    assert.equal(record.contextPayload.contextValue, "ctx-visible");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("records a TUI model call with agent and source metadata", async () => {
